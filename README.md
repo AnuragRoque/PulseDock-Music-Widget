@@ -4,20 +4,18 @@ PulseDock Widget is a sleek, modern, and highly-customizable floating media cont
 
 Built with **PyQt6** and **Python Windows SDK (`winsdk`)**, it features a lightweight, frameless, and adaptive design that updates its theme based on the active media player.
 
+<p align="center">
+  <img src="sample%20images/2.png" alt="PulseDock Widget Theme Presets" width="650">
+</p>
+
 ---
 
 ## ✨ Features
 
 - **Direct Windows SMTC Integration**: Reads media metadata (title, artist, player origin) and sends controls (Play/Pause, Next, Previous) asynchronously without blocking.
 - **Dynamic Auto-Theme**: Automatically switches appearance matching the active source app (e.g., Spotify, YouTube Music) or lets you pick classic, dark, or warm custom themes manually.
-- **Multi-Size Layouts**: Supports 5 scaling options ranging from Extra Small (XS) button-only mode to a Large (L) vertical card layout:
-  - `50%` (Extra Small): 3-button compact controls.
-  - `75%` (Small): Title/Artist display next to controls.
-  - `100%` (Normal): Full layout with active playing status and metadata.
-  - `125%` (Wide): Extended layouts showing the source name (e.g., *Playing • Spotify*).
-  - `150%` (Large): Vertical square layout designed to look like a desktop gadget.
-- **Marquee Text Scrolling**: Smooth scrolling effect for titles and artists that exceed the display boundaries.
-- **Adaptive SVG Icon Colors**: Recolors all controls dynamically to match the active theme's accent colors.
+- **Multi-Size Layouts**: Supports 5 preset sizes: Extra Small (XS) button-only mode, Small, Normal, Wide, and Large.
+
 - **Customizable Opacity**: Adjust transparency levels from 20% to 100% for a subtle desktop integration.
 - **Settings Persistence**: Saves your layout position, window scaling, transparency, active theme preference, and "Always on Top" settings under `%LocalAppData%\PulseDock Widget\settings.json`.
 - **System Tray Controls**: Run in the background, minimize to tray, toggle "Always on Top", switch styles, or hide/show the widget easily via the system tray context menu.
@@ -33,6 +31,29 @@ PulseDock comes with several custom color schemes:
 4. **Midnight Drive (Theme 1)**: Deep dark blue background with emerald green accents.
 5. **Daylight (Theme 2)**: Crisp light-grey interface with sky blue highlights.
 6. **Coffee & Cigarettes (Theme 5)**: Warm vintage brown/coffee aesthetic.
+
+---
+
+## 📸 Screenshots
+
+<p align="center">
+  <b>Multi-Size Layouts (from 50% XS to 150% L) & Custom Styles</b><br>
+  <img src="sample%20images/1.png" alt="Multi-Size Layouts" width="500">
+</p>
+
+<br>
+
+<p align="center">
+  <b>Seamless Desktop Integration</b><br>
+  <img src="sample%20images/4.png" alt="Desktop Integration" width="500">
+</p>
+
+<br>
+
+<p align="center">
+  <b>Visual Studio Code Development Environment</b><br>
+  <img src="sample%20images/3.png" alt="Development Environment" width="650">
+</p>
 
 ---
 
