@@ -19,7 +19,10 @@ Built with **PyQt6** and **Python Windows SDK (`winsdk`)**, it features a lightw
 - **Customizable Opacity**: Adjust transparency levels from 20% to 100% for a subtle desktop integration.
 - **Settings Persistence**: Saves your layout position, window scaling, transparency, active theme preference, and "Always on Top" settings under `%LocalAppData%\PulseDock Widget\settings.json`.
 - **System Tray Controls**: Run in the background, minimize to tray, toggle "Always on Top", switch styles, or hide/show the widget easily via the system tray context menu.
-
+<p align="center">
+  <b>Tray Icon Pin</b><br>
+  <img src="sample%20images/5.png" alt="Tray bar" width="400">
+</p>
 ---
 
 ## 🎨 Theme Presets
