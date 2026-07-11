@@ -13,8 +13,10 @@ Built with **PyQt6** and **Python Windows SDK (`winsdk`)**, it features a lightw
 ## ✨ Features
 
 - **Direct Windows SMTC Integration**: Reads media metadata (title, artist, player origin) and sends controls (Play/Pause, Next, Previous) asynchronously without blocking.
+- **Album Art (v2.0)**: Displays the current track's cover art with rounded corners in Normal, Wide, and Large modes — fetched straight from the media session and cached per track. Shows a themed music-note placeholder when no art is available.
+- **Volume & Mute Control (v2.0)**: Scroll the mouse wheel anywhere on the widget to raise/lower the system master volume (5% per notch, touchpad friendly), and click the speaker button to mute/unmute. The speaker icon reflects the live state (off / low / high) and a tooltip + status flash shows the volume percentage. Implemented with raw Core Audio COM — no extra dependencies.
 - **Dynamic Auto-Theme**: Automatically switches appearance matching the active source app (e.g., Spotify, YouTube Music) or lets you pick classic, dark, or warm custom themes manually.
-- **Multi-Size Layouts**: Supports 5 preset sizes: Extra Small (XS) button-only mode, Small, Normal, Wide, and Large.
+- **Multi-Size Layouts**: Supports 5 preset sizes: Extra Small (XS) button-only mode, Small, Normal, Wide, and Large. Normal/Wide place the art beside the track info; Large shows a big cover on top, mini-player style.
 
 - **Customizable Opacity**: Adjust transparency levels from 20% to 100% for a subtle desktop integration.
 - **Settings Persistence**: Saves your layout position, window scaling, transparency, active theme preference, and "Always on Top" settings under `%LocalAppData%\PulseDock Widget\settings.json`.
@@ -83,6 +85,8 @@ python pulse_dock_music_widget.py
 
 ### Dragging & Desktop Control
 - **Move Widget**: Click and drag anywhere on the widget to reposition it on your desktop.
+- **Volume**: Scroll the mouse wheel anywhere over the widget to adjust the system volume (works in every size mode). Scrolling up while muted automatically unmutes.
+- **Mute**: Click the speaker button (Normal, Wide, and Large modes) to toggle mute. Muting preserves your volume level; unmuting restores it.
 - **System Tray**: Right-click the PulseDock tray icon (usually in the bottom right corner of the taskbar) to open the configuration menu.
 - **Minimize to Tray**: Click the small down arrow in the top right of the widget (visible at `75%` scale and above) to hide it. Left-click or right-click the system tray icon to bring it back.
 

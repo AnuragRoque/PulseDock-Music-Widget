@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# Local working files
+Backups/
+*copy.py
+crash_log.txt
+settings.json
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
