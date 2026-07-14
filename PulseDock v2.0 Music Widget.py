@@ -5,9 +5,12 @@ import asyncio
 import ctypes
 import json
 import os
+import re
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional
@@ -16,6 +19,7 @@ from PyQt6.QtCore import (
     Qt,
     QTimer,
     QPoint,
+    QPointF,
     QRectF,
     QSize,
     QThread,
@@ -25,14 +29,17 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
+    QBrush,
     QIcon,
     QImage,
+    QLinearGradient,
     QPainterPath,
     QPen,
     QPixmap,
     QPainter,
     QColor,
     QPolygon,
+    QRadialGradient,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -194,8 +201,8 @@ SIZE_CONFIGS = {
         "artist_size": 13,
         "status_size": 12,
         "card_radius": 20,
-        "art_size": 112,
-        "art_radius": 12,
+        "art_size": 164,
+        "art_radius": 14,
         "vol_size": 18,
         "icon_vol": 12,
     }
@@ -330,6 +337,20 @@ THEME_CONFIGS = {
         "play_hover_bg": "#755241",
         "play_fg": "#FFFFFF",
         "light_theme": True
+    },
+    "liquid_glass": {
+        "name": "Liquid Glass",
+        "bg_color": (40, 44, 52),
+        "text_color": "#FFFFFF",
+        "artist_color": "#C9CED6",
+        "dot_color": "#0A84FF",
+        "icon_color": "#FFFFFF",
+        "play_bg": None,
+        "play_hover_bg": None,
+        "play_fg": "#FFFFFF",
+        "light_theme": False,
+        # Frosted gradient material + specular rim instead of a flat fill
+        "glass": True
     }
 }
 
@@ -571,6 +592,71 @@ def blurred_bg_pixmap(data: bytes, width: int, height: int, radius: float,
     return out
 
 
+def glass_overlay_pixmap(width: int, height: int, radius: float,
+                         strength: float = 1.0, dpr: float = 1.0) -> QPixmap:
+    """Painted 'liquid glass' material for the card.
+
+    QSS can only do flat linear gradients, so the parts that actually sell
+    glass are painted here: a curved reflection sweeping the top (light on a
+    convex surface), a specular rim that is brightest where the light hits,
+    and a faint bounce glow along the bottom edge.
+    """
+    w = max(1, int(round(width * dpr)))
+    h = max(1, int(round(height * dpr)))
+    r = radius * dpr
+    s = max(0.0, min(1.0, strength))
+
+    out = QPixmap(w, h)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    rect = QRectF(0, 0, w, h)
+    clip = QPainterPath()
+    clip.addRoundedRect(rect, r, r)
+    p.setClipPath(clip)
+
+    # 1. Curved top reflection: a large ellipse hanging above the card whose
+    #    bottom arc cuts across it, so the sheen boundary is curved, not flat.
+    ellipse = QPainterPath()
+    ellipse.addEllipse(QRectF(-w * 0.25, -h * 1.15, w * 1.5, h * 1.6))
+    sheen = ellipse.intersected(clip)
+    sheen_grad = QLinearGradient(0, 0, 0, h * 0.5)
+    sheen_grad.setColorAt(0.0, QColor(255, 255, 255, int(64 * s)))
+    sheen_grad.setColorAt(1.0, QColor(255, 255, 255, int(8 * s)))
+    p.fillPath(sheen, QBrush(sheen_grad))
+
+    # 2. Corner hot-spot: light concentrates where it enters the glass
+    spot = QRadialGradient(QPointF(w * 0.18, 0), w * 0.55)
+    spot.setColorAt(0.0, QColor(255, 255, 255, int(34 * s)))
+    spot.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.fillRect(rect, QBrush(spot))
+
+    # 3. Bottom bounce glow: soft light re-entering from the lower edge
+    glow = QRadialGradient(QPointF(w * 0.5, h * 1.35), w * 0.8)
+    glow.setColorAt(0.0, QColor(255, 255, 255, int(30 * s)))
+    glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.fillRect(rect, QBrush(glow))
+
+    # 4. Specular rim: a single gradient stroke, bright top edge fading down.
+    #    Painted instead of a QSS border so the corners stay smooth.
+    rim = QLinearGradient(0, 0, 0, h)
+    rim.setColorAt(0.0, QColor(255, 255, 255, int(160 * s)))
+    rim.setColorAt(0.22, QColor(255, 255, 255, int(70 * s)))
+    rim.setColorAt(0.85, QColor(255, 255, 255, int(34 * s)))
+    rim.setColorAt(1.0, QColor(255, 255, 255, int(60 * s)))
+    pen = QPen(QBrush(rim), max(1.0, 1.3 * dpr))
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    inset = pen.widthF() / 2.0
+    p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset),
+                      r - inset, r - inset)
+
+    p.end()
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
 def fmt_time(seconds: float) -> str:
     s = max(0, int(seconds))
     if s >= 3600:
@@ -635,7 +721,81 @@ async def _read_thumbnail_async(props) -> bytes:
             pass
 
 
-async def read_snapshot_async(thumb_cache: Optional[dict] = None) -> Snapshot:
+# --- High-res album art (iTunes Search API, stdlib urllib only) ------------
+# Windows SMTC thumbnails are often tiny (browsers hand over ~150px), which
+# looks blurry on the larger art tiles. When the system thumbnail is low-res
+# we look the track up on the free iTunes Search API and swap in 600x600 art.
+_HIRES_CACHE: dict = {}          # (title, artist) -> bytes (b"" = known miss)
+_HIRES_PENDING: set = set()      # fetches currently running
+_HIRES_LOCK = threading.Lock()
+_HIRES_CACHE_MAX = 24
+_HIRES_MIN_PX = 256              # SMTC art smaller than this gets upgraded
+
+
+def _clean_search_term(text: str) -> str:
+    """Strip noise like '(Official Video)' / '[4K]' / YT's '- Topic' suffix."""
+    t = re.sub(r"[\(\[][^)\]]*[\)\]]", " ", text)
+    t = re.sub(r"\s*-\s*Topic\s*$", "", t, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _is_lowres_art(data: bytes) -> bool:
+    if not data:
+        return True
+    img = QImage.fromData(data)
+    return img.isNull() or min(img.width(), img.height()) < _HIRES_MIN_PX
+
+
+def _fetch_hires_art(title: str, artist: str) -> bytes:
+    term = _clean_search_term(f"{artist} {title}")
+    if not term:
+        return b""
+    url = ("https://itunes.apple.com/search?media=music&entity=song&limit=1"
+           "&term=" + urllib.parse.quote(term))
+    req = urllib.request.Request(url, headers={"User-Agent": APP_NAME})
+    with urllib.request.urlopen(req, timeout=6) as resp:
+        payload = json.loads(resp.read().decode("utf-8", "replace"))
+    results = payload.get("results") or []
+    art_url = results[0].get("artworkUrl100", "") if results else ""
+    if not art_url:
+        return b""
+    art_url = art_url.replace("100x100bb", "600x600bb")
+    req = urllib.request.Request(art_url, headers={"User-Agent": APP_NAME})
+    with urllib.request.urlopen(req, timeout=6) as resp:
+        return resp.read()
+
+
+def _hires_fetch_worker(key: tuple):
+    try:
+        data = _fetch_hires_art(*key)
+    except Exception:
+        data = b""
+    with _HIRES_LOCK:
+        if len(_HIRES_CACHE) > _HIRES_CACHE_MAX:
+            _HIRES_CACHE.clear()
+        _HIRES_CACHE[key] = data
+        _HIRES_PENDING.discard(key)
+
+
+def get_hires_art(title: str, artist: str) -> Optional[bytes]:
+    """Cached 600x600 art for a track, fetched in the background.
+
+    Returns bytes on a hit, b"" for a known miss, or None while the fetch is
+    still running — the caller keeps the SMTC thumbnail in the meantime.
+    """
+    key = (title, artist)
+    with _HIRES_LOCK:
+        if key in _HIRES_CACHE:
+            return _HIRES_CACHE[key]
+        if key not in _HIRES_PENDING:
+            _HIRES_PENDING.add(key)
+            threading.Thread(target=_hires_fetch_worker, args=(key,),
+                             daemon=True).start()
+    return None
+
+
+async def read_snapshot_async(thumb_cache: Optional[dict] = None,
+                              hires_enabled: bool = True) -> Snapshot:
     if MediaManager is None:
         return Snapshot(
             title="winsdk missing",
@@ -703,11 +863,26 @@ async def read_snapshot_async(thumb_cache: Optional[dict] = None) -> Snapshot:
             and thumb_cache.get("data")
         ):
             thumb = thumb_cache["data"]
+            thumb_lowres = thumb_cache.get("lowres", False)
         else:
             thumb = await _read_thumbnail_async(props)
+            thumb_lowres = _is_lowres_art(thumb)
             if thumb_cache is not None:
                 thumb_cache["key"] = track_key
                 thumb_cache["data"] = thumb
+                thumb_cache["lowres"] = thumb_lowres
+
+        # Upgrade low-res system thumbnails with online 600x600 album art;
+        # keeps the SMTC thumbnail when the lookup finds no match.
+        if (
+            hires_enabled
+            and thumb_lowres
+            and title != "Unknown title"
+            and artist != "Unknown artist"
+        ):
+            hires = get_hires_art(title, artist)
+            if hires:
+                thumb = hires
 
         return Snapshot(
             title=title,
@@ -1173,6 +1348,8 @@ class SMTCWorker(QThread):
         self._wake = threading.Event()
         # Per-track album-art cache so the thumbnail stream is not re-read every poll
         self._thumb_cache: dict = {}
+        # Online high-res album-art upgrade (toggled from the context menu)
+        self.hires_enabled = True
 
     def run(self):
         import ctypes
@@ -1183,7 +1360,7 @@ class SMTCWorker(QThread):
 
         while self._running:
             try:
-                snap = asyncio.run(read_snapshot_async(self._thumb_cache))
+                snap = asyncio.run(read_snapshot_async(self._thumb_cache, self.hires_enabled))
                 if isinstance(snap, Snapshot):
                     self.snapshot_updated.emit(snap)
             except Exception:
@@ -1225,6 +1402,7 @@ class MusicWidget(QWidget):
         self.art_bg_enabled = self.settings.get("art_bg", False)
         self.show_progress = self.settings.get("show_progress", True)
         self.marquee_enabled = self.settings.get("marquee", True)
+        self.hires_art_enabled = self.settings.get("hires_art", True)
 
         # System volume control + album art state
         self.sys_volume = SystemVolume()
@@ -1239,6 +1417,9 @@ class MusicWidget(QWidget):
         # Art-derived dynamic theme + blurred-background caches
         self._auto_theme_cache: dict = {}
         self._last_bg_sig = None
+        # Liquid Glass sheen overlay state
+        self._glass_active = False
+        self._last_glass_sig = None
         # Progress interpolation between 1s worker polls
         self._pos_base = -1.0
         self._pos_ts = time.monotonic()
@@ -1284,6 +1465,7 @@ class MusicWidget(QWidget):
 
         # Setup and start Worker Thread (non-blocking QThread with COM MTA)
         self.worker = SMTCWorker(self)
+        self.worker.hires_enabled = self.hires_art_enabled
         self.worker.snapshot_updated.connect(self._handle_snapshot)
         self.worker.start()
 
@@ -1296,6 +1478,7 @@ class MusicWidget(QWidget):
             "art_bg": False,
             "show_progress": True,
             "marquee": True,
+            "hires_art": True,
             "x": 100,
             "y": 100
         }
@@ -1317,6 +1500,7 @@ class MusicWidget(QWidget):
             "art_bg": self.art_bg_enabled,
             "show_progress": self.show_progress,
             "marquee": self.marquee_enabled,
+            "hires_art": self.hires_art_enabled,
             "x": self.x(),
             "y": self.y()
         }
@@ -1346,6 +1530,12 @@ class MusicWidget(QWidget):
         self.bg_label.setObjectName("card_bg")
         self.bg_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.bg_label.hide()
+
+        # Liquid Glass sheen overlay (above the art bg, below all content)
+        self.glass_label = QLabel(self.card)
+        self.glass_label.setObjectName("glass_overlay")
+        self.glass_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.glass_label.hide()
 
         # Album art (shown in Normal / Wide / Large modes)
         self.art_label = QLabel(self.card)
@@ -1678,7 +1868,9 @@ class MusicWidget(QWidget):
             layout.addLayout(controls_layout)
 
         # Keep the absolute overlays in the right stacking order after every
-        # rebuild: blurred art background at the very bottom, progress on top.
+        # rebuild: blurred art background at the very bottom, glass sheen just
+        # above it, progress on top.
+        self.glass_label.lower()
         self.bg_label.lower()
         self.progress_line.raise_()
         self._tick_progress()
@@ -1692,6 +1884,8 @@ class MusicWidget(QWidget):
         if hasattr(self, "bg_label"):
             # Inset 1px so the card's QSS border stays visible around the art
             self.bg_label.setGeometry(1, 1, self.width() - 2, self.height() - 2)
+        if hasattr(self, "glass_label"):
+            self._update_glass_overlay()
 
         scale = self.current_scale_pct
         if scale == 50:
@@ -1732,6 +1926,12 @@ class MusicWidget(QWidget):
         self.art_bg_action.triggered.connect(self.toggle_art_bg)
         menu.addAction(self.art_bg_action)
 
+        # Online 600x600 upgrade for low-res system thumbnails
+        self.hires_art_action = QAction("High-Res Album Art (Online)", self, checkable=True)
+        self.hires_art_action.setChecked(self.hires_art_enabled)
+        self.hires_art_action.triggered.connect(self.toggle_hires_art)
+        menu.addAction(self.hires_art_action)
+
         self.progress_action = QAction("Show Progress Bar", self, checkable=True)
         self.progress_action.setChecked(self.show_progress)
         self.progress_action.triggered.connect(self.toggle_progress)
@@ -1756,7 +1956,8 @@ class MusicWidget(QWidget):
             ("YouTube Music White", "yt_white"),
             ("Midnight Drive (Theme 1)", "theme_1"),
             ("Daylight (Theme 2)", "theme_2"),
-            ("Coffee & Cigarettes (Theme 5)", "theme_5")
+            ("Coffee & Cigarettes (Theme 5)", "theme_5"),
+            ("Liquid Glass", "liquid_glass")
         ]
         
         self.theme_actions = {}
@@ -1850,6 +2051,14 @@ class MusicWidget(QWidget):
     def contextMenuEvent(self, event):
         self.context_menu.exec(event.globalPos())
 
+    def toggle_hires_art(self):
+        self.hires_art_enabled = self.hires_art_action.isChecked()
+        if hasattr(self, "worker"):
+            self.worker.hires_enabled = self.hires_art_enabled
+        self.save_settings()
+        # Next poll delivers the other art variant; wake it now
+        self.refresh_media()
+
     def toggle_art_bg(self):
         self.art_bg_enabled = self.art_bg_action.isChecked()
         # Force a restyle: the art-derived theme depends on this flag
@@ -1903,7 +2112,7 @@ class MusicWidget(QWidget):
         elif scale == 125:
             new_w, new_h = 140, 178  # Mini: vertical card as narrow as XS
         elif scale == 150:
-            new_w, new_h = 216, 292  # taller for big album art on top
+            new_w, new_h = 216, 344  # taller for big album art on top
         else:
             new_w, new_h = 330, 76
 
@@ -2006,6 +2215,23 @@ class MusicWidget(QWidget):
         
         is_light = config["light_theme"]
         border_color = "rgba(0, 0, 0, 0.06)" if is_light else "rgba(255, 255, 255, 0.08)"
+
+        # The glass overlay also stays on when the art background/auto theme
+        # swaps in an art-derived config over the Liquid Glass selection.
+        is_glass = bool(config.get("glass")) or self.current_theme_code == "liquid_glass"
+        if is_glass:
+            # Base frosted material only — the curved reflection and the
+            # specular rim are painted by the glass overlay pixmap.
+            card_bg = (
+                "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                f"stop:0 rgba(72, 78, 92, {0.88 * alpha:.3f}), "
+                f"stop:0.55 rgba(46, 50, 60, {0.86 * alpha:.3f}), "
+                f"stop:1 rgba(36, 39, 48, {0.90 * alpha:.3f}))"
+            )
+            card_border_rules = "border: none;"
+        else:
+            card_bg = bg_rgba
+            card_border_rules = f"border: 1px solid {border_color};"
         
         title_color = config["text_color"]
         artist_color = config["artist_color"]
@@ -2032,7 +2258,22 @@ class MusicWidget(QWidget):
         play_hover_bg = config["play_hover_bg"]
         
         # Build play button specific style sheet rules
-        if play_bg is None:
+        if is_glass:
+            # Frosted circle matching the glass card material
+            play_style = f"""
+                QToolButton#play_btn {{
+                    background: rgba(255, 255, 255, 0.16);
+                    border: 1px solid rgba(255, 255, 255, 0.40);
+                    border-radius: {play_radius}px;
+                }}
+                QToolButton#play_btn:hover {{
+                    background: rgba(255, 255, 255, 0.26);
+                }}
+                QToolButton#play_btn:pressed {{
+                    background: rgba(255, 255, 255, 0.36);
+                }}
+            """
+        elif play_bg is None:
             # Theme 1 outline circle
             play_style = f"""
                 QToolButton#play_btn {{
@@ -2074,8 +2315,8 @@ class MusicWidget(QWidget):
                 font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             }}
             QFrame#card {{
-                background: {bg_rgba};
-                border: 1px solid {border_color};
+                background: {card_bg};
+                {card_border_rules}
                 border-radius: {card_radius}px;
             }}
             #title {{
@@ -2166,6 +2407,10 @@ class MusicWidget(QWidget):
         track = QColor(0, 0, 0, 26) if is_light else QColor(255, 255, 255, 30)
         self.progress_line.set_style(fill, track, card_radius)
 
+        # 5. Liquid Glass sheen overlay
+        self._glass_active = is_glass
+        self._update_glass_overlay()
+
     def refresh_media(self):
         if hasattr(self, "worker"):
             self.worker.trigger_refresh()
@@ -2234,6 +2479,30 @@ class MusicWidget(QWidget):
         self.bg_label.setPixmap(pm)
         self.bg_label.setGeometry(1, 1, w, h)
         self.bg_label.show()
+        self.bg_label.lower()
+
+    def _update_glass_overlay(self):
+        """Show/refresh the painted Liquid Glass sheen when the theme uses it."""
+        if not self._glass_active:
+            if self._last_glass_sig is not None:
+                self._last_glass_sig = None
+                self.glass_label.clear()
+            self.glass_label.hide()
+            return
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        size_cfg = SIZE_CONFIGS.get(self.current_scale_pct, SIZE_CONFIGS[100])
+        radius = size_cfg.get("card_radius", 14)
+        sig = (w, h, radius)
+        if sig != self._last_glass_sig:
+            self._last_glass_sig = sig
+            pm = glass_overlay_pixmap(w, h, radius, 1.0, self.devicePixelRatioF())
+            self.glass_label.setPixmap(pm)
+            self.glass_label.setGeometry(0, 0, w, h)
+        self.glass_label.show()
+        # Stay above the blurred-art background but under all content
+        self.glass_label.lower()
         self.bg_label.lower()
         self._last_bg_sig = sig
 
