@@ -86,6 +86,7 @@ except Exception:
     WinInputStreamOptions = None
 
 
+APP_NAME = "PulseDock Widget"
 from pathlib import Path
 
 APP_NAME = "PulseDock Widget"
@@ -137,24 +138,24 @@ def set_launch_on_startup(enabled: bool) -> bool:
     except Exception:
         return False
 
-def resource_path(relative_path):
-    """Resolve bundled assets (icons/, .ico) next to the exe/script.
-
-    Never use the current working directory: when Windows launches the app
-    at login the CWD is arbitrary, which used to silently break every icon.
-    """
+def resource_path(path):
     try:
-        base_path = sys._MEIPASS  # PyInstaller bundle
+        base = sys._MEIPASS
+    except:
+        base = os.path.abspath(".")
+    return os.path.join(base, path)
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
-
-
+# APP_ICON = QIcon(resource_path("PulseDock.ico"))
 def exception_hook(exctype, value, tb):
     import traceback
     try:
-        # Settings dir is always writable; the CWD often is not
-        with open(SETTINGS_DIR / "crash_log.txt", "w") as f:
+        with open("crash_log.txt", "w") as f:
             traceback.print_exception(exctype, value, tb, file=f)
     except Exception:
         pass
@@ -179,26 +180,9 @@ class Snapshot:
     pos_sec: float = -1.0   # current playback position; -1 = unknown
     dur_sec: float = -1.0   # track duration; -1 = unknown
     start_sec: float = 0.0  # timeline start offset (added back when seeking)
-    # Dominant art color, precomputed on the worker thread so the GUI never
-    # runs the pixel scan (it used to hitch right on track change)
-    accent_rgb: Optional[tuple] = None
 
 
 SIZE_CONFIGS = {
-    25: {  # Drop - Dynamic Island punch-hole idle: circular album art only
-        "play_size": 24,
-        "play_radius": 12,
-        "skip_size": 20,
-        "skip_radius": 10,
-        "icon_play": 14,
-        "icon_skip": 12,
-        "title_size": 10,
-        "artist_size": 8,
-        "status_size": 8,
-        "card_radius": 24,  # half the 48px window = full circle
-        "art_size": 40,
-        "art_radius": 20,
-    },
     50: {
         "play_size": 28,
         "play_radius": 14,
@@ -1016,20 +1000,6 @@ async def read_snapshot_async(thumb_cache: Optional[dict] = None,
             if hires:
                 thumb = hires
 
-        # Dominant-color scan on this worker thread (bytes-hash cached, so it
-        # runs once per distinct art, not per poll)
-        accent_rgb = None
-        if thumb:
-            akey = hash(thumb)
-            if thumb_cache is not None and thumb_cache.get("accent_key") == akey:
-                accent_rgb = thumb_cache.get("accent_rgb")
-            else:
-                c = art_accent_color(thumb)
-                accent_rgb = (c.red(), c.green(), c.blue()) if c is not None else None
-                if thumb_cache is not None:
-                    thumb_cache["accent_key"] = akey
-                    thumb_cache["accent_rgb"] = accent_rgb
-
         return Snapshot(
             title=title,
             artist=artist,
@@ -1044,7 +1014,6 @@ async def read_snapshot_async(thumb_cache: Optional[dict] = None,
             pos_sec=pos_sec,
             dur_sec=dur_sec,
             start_sec=start_sec,
-            accent_rgb=accent_rgb,
         )
     except asyncio.CancelledError:
         return Snapshot()
@@ -1238,61 +1207,6 @@ def _is_pinnable_window(hwnd: int, my_pid: int) -> bool:
         and bool(_hwnd_title(hwnd))
         and _hwnd_class(hwnd) not in _SHELL_CLASSES
     )
-
-
-class _WINRECT(ctypes.Structure):
-    _fields_ = [
-        ("left", ctypes.c_long),
-        ("top", ctypes.c_long),
-        ("right", ctypes.c_long),
-        ("bottom", ctypes.c_long),
-    ]
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", ctypes.c_ulong),
-        ("rcMonitor", _WINRECT),
-        ("rcWork", _WINRECT),
-        ("dwFlags", ctypes.c_ulong),
-    ]
-
-
-def _hwnd_monitor(hwnd: int) -> int:
-    try:
-        # 2 = MONITOR_DEFAULTTONEAREST
-        return int(ctypes.windll.user32.MonitorFromWindow(ctypes.c_void_p(hwnd), 2) or 0)
-    except Exception:
-        return 0
-
-
-def _is_fullscreen_window(hwnd: int) -> bool:
-    """True when the window covers its entire monitor (video/game/slideshow).
-
-    Maximized windows normally stop at the taskbar's work area, so they don't
-    count — only true borderless/exclusive fullscreen does.
-    """
-    try:
-        u = ctypes.windll.user32
-        r = _WINRECT()
-        if not u.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(r)):
-            return False
-        mon = u.MonitorFromWindow(ctypes.c_void_p(hwnd), 2)
-        if not mon:
-            return False
-        mi = _MONITORINFO()
-        mi.cbSize = ctypes.sizeof(_MONITORINFO)
-        if not u.GetMonitorInfoW(ctypes.c_void_p(mon), ctypes.byref(mi)):
-            return False
-        m = mi.rcMonitor
-        return (
-            r.left <= m.left + 2
-            and r.top <= m.top + 2
-            and r.right >= m.right - 2
-            and r.bottom >= m.bottom - 2
-        )
-    except Exception:
-        return False
 
 
 class SystemVolume:
@@ -1621,25 +1535,18 @@ class ProgressLine(QWidget):
         self._radius = radius
         self.update()
 
-    def _refresh_strip(self):
-        # Invalidate only the bottom strip (bar + knob), not the whole card —
-        # this widget covers the full card, so a bare update() would force a
-        # complete recomposite twice a second
-        h = self.height()
-        self.update(QRect(0, max(0, h - 16), self.width(), 16))
-
     def set_fraction(self, fraction: float):
         fraction = max(0.0, min(1.0, fraction))
         if abs(fraction - self._fraction) < 0.001:
             return
         self._fraction = fraction
-        self._refresh_strip()
+        self.update()
 
     def set_hover(self, hover: bool):
         if hover == self._hover:
             return
         self._hover = hover
-        self._refresh_strip()
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -1737,17 +1644,11 @@ class MusicWidget(QWidget):
         self.launch_on_startup = self.settings.get("launch_on_startup", False)
         self.seen_intro = self.settings.get("seen_intro", False)
         self._last_seen_aumid = self.settings.get("last_aumid", "")
-        # Politely disappear while a fullscreen app owns the widget's monitor
-        self.autohide_fullscreen = self.settings.get("autohide_fullscreen", True)
-        self._fs_hidden = False  # True only when WE hid it (not the user)
-        # Opacity fade for automatic show/hide transitions
-        self._vis_anim = None
-        self._vis_goal = None
 
         # Dynamic Island mode (scale 200): both states reuse existing layouts —
-        # idle shows Drop / XS / S, hover expands into Normal or Mini Card
+        # idle shows XS or S, hover expands into Normal or Mini Card
         self.island_idle = self.settings.get("island_idle", 50)
-        if self.island_idle not in (25, 50, 75):
+        if self.island_idle not in (50, 75):
             self.island_idle = 50
         self.island_expand = self.settings.get("island_expand", 100)
         if self.island_expand not in (100, 125):
@@ -1880,7 +1781,6 @@ class MusicWidget(QWidget):
             "launch_on_startup": False,
             "seen_intro": False,
             "last_aumid": "",
-            "autohide_fullscreen": True,
             "island_expand": 100,
             "island_idle": 50,
             "island_x": None,
@@ -1910,7 +1810,6 @@ class MusicWidget(QWidget):
             "launch_on_startup": self.launch_on_startup,
             "seen_intro": self.seen_intro,
             "last_aumid": self._last_seen_aumid,
-            "autohide_fullscreen": self.autohide_fullscreen,
             "island_expand": self.island_expand,
             "island_idle": self.island_idle,
             "island_x": self._island_pos[0] if self._island_pos else None,
@@ -1920,11 +1819,8 @@ class MusicWidget(QWidget):
             "y": self._normal_pos[1]
         }
         try:
-            # Atomic write: a crash mid-save must not corrupt settings.json
-            tmp = str(SETTINGS_FILE) + ".tmp"
-            with open(tmp, "w") as f:
+            with open(SETTINGS_FILE, "w") as f:
                 json.dump(settings, f, indent=4)
-            os.replace(tmp, SETTINGS_FILE)
         except Exception:
             pass
 
@@ -2069,7 +1965,7 @@ class MusicWidget(QWidget):
             self.vol_btn.setIconSize(QSize(size_cfg["icon_vol"], size_cfg["icon_vol"]))
         
         # Configure minimize + pin buttons (pin sits just left of minimize)
-        if scale in (25, 50):
+        if scale == 50:
             self.min_btn.hide()
             self.pin_btn.hide()
         elif scale in (75, 125):
@@ -2101,26 +1997,7 @@ class MusicWidget(QWidget):
             self.status_text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
         # 3. Create the appropriate layout based on size mode
-        if scale == 25:  # Drop - island punch-hole: circular album art only
-            self.status_dot.hide()
-            self.status_text.hide()
-            self.time_label.hide()
-            self.vol_btn.hide()
-            self.prev_btn.hide()
-            self.play_btn.hide()
-            self.next_btn.hide()
-            self.title.hide()
-            self.artist.hide()
-            self.art_label.show()
-
-            layout = QHBoxLayout(self.card)
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(0)
-            layout.addStretch(1)
-            layout.addWidget(self.art_label)
-            layout.addStretch(1)
-
-        elif scale == 50:  # Extra Small (XS) - art tile + title/artist; hover swaps to the 3 buttons
+        if scale == 50:  # Extra Small (XS) - art tile + title/artist; hover swaps to the 3 buttons
             self.status_dot.hide()
             self.status_text.hide()
             self.time_label.hide()
@@ -2358,7 +2235,7 @@ class MusicWidget(QWidget):
             self._update_glass_overlay()
 
         scale = self._layout_scale()
-        if scale in (25, 50):
+        if scale == 50:
             self.min_btn.hide()
             self.pin_btn.hide()
             return
@@ -2409,12 +2286,6 @@ class MusicWidget(QWidget):
         self.launch_startup_action.setChecked(self.launch_on_startup)
         self.launch_startup_action.triggered.connect(self.toggle_launch_on_startup)
         menu.addAction(self.launch_startup_action)
-
-        # Hide while a fullscreen app (video/game/slides) owns the screen
-        self.autohide_fs_action = QAction("Auto-Hide on Fullscreen", self, checkable=True)
-        self.autohide_fs_action.setChecked(self.autohide_fullscreen)
-        self.autohide_fs_action.triggered.connect(self.toggle_autohide_fullscreen)
-        menu.addAction(self.autohide_fs_action)
 
         # Album art as blurred card background (also themes from the art)
         self.art_bg_action = QAction("Album Art Background", self, checkable=True)
@@ -2527,7 +2398,7 @@ class MusicWidget(QWidget):
         island_menu.addSection("Idle Size")
         self.island_idle_group = QActionGroup(self)
         self.island_idle_actions = {}
-        for label, pct in [("Drop (Art Only)", 25), ("Extra Small (XS)", 50), ("Small (S)", 75)]:
+        for label, pct in [("Extra Small (XS)", 50), ("Small (S)", 75)]:
             action = QAction(label, self, checkable=True)
             action.setData(pct)
             action.triggered.connect(self.change_island_idle_from_action)
@@ -2556,11 +2427,14 @@ class MusicWidget(QWidget):
 
         menu.addSeparator()
 
-        # Show / Hide toggle — label follows the widget's current visibility
-        self.show_hide_action = QAction("Hide Widget", self)
-        self.show_hide_action.triggered.connect(self.toggle_widget_visible)
-        menu.addAction(self.show_hide_action)
-        menu.aboutToShow.connect(self._sync_show_hide_label)
+        # Show / Hide actions
+        show_action = QAction("Show Widget", self)
+        show_action.triggered.connect(self.show_from_tray)
+        menu.addAction(show_action)
+
+        hide_action = QAction("Hide Widget", self)
+        hide_action.triggered.connect(self.hide_to_tray)
+        menu.addAction(hide_action)
 
         menu.addSeparator()
 
@@ -2621,15 +2495,6 @@ class MusicWidget(QWidget):
                 1500,
             )
 
-    def toggle_autohide_fullscreen(self):
-        self.autohide_fullscreen = self.autohide_fs_action.isChecked()
-        if not self.autohide_fullscreen and self._fs_hidden:
-            # Feature switched off while we were hiding — come back
-            self._fs_hidden = False
-            self._cancel_fade()
-            self.show()
-        self.save_settings()
-
     def _show_intro(self):
         try:
             self.tray.showMessage(
@@ -2667,8 +2532,6 @@ class MusicWidget(QWidget):
             self.save_settings()
 
     def _scale_window_size(self, scale: int) -> tuple:
-        if scale == 25:
-            return 48, 48  # Drop: circular punch-hole
         if scale == 50:
             return 140, 46
         if scale == 75:
@@ -2719,8 +2582,7 @@ class MusicWidget(QWidget):
             if self._island_pos is None:
                 scr = self.screen() or QApplication.primaryScreen()
                 a = scr.availableGeometry()
-                self._island_pos = (a.center().x() - new_w // 2,
-                                    a.top() + self._island_top_gap())
+                self._island_pos = (a.center().x() - new_w // 2, a.top() + 6)
             self.move(*self._island_pos)
         else:
             self.move(*self._normal_pos)
@@ -2778,56 +2640,6 @@ class MusicWidget(QWidget):
         if self.current_scale_pct == 200 and not self._hovering:
             self._set_island_expanded(False)
 
-    def _fade_to(self, visible: bool):
-        """Smooth opacity fade for automatic show/hide (pin / fullscreen).
-
-        Manual actions still snap instantly; only the watcher uses this, so
-        the widget stops popping in and out of existence.
-        """
-        goal = "show" if visible else "hide"
-        if self._vis_goal == goal:
-            return  # already fading that way
-        if self._vis_goal is None and visible == self.isVisible():
-            return  # already in that state, nothing running
-        old = getattr(self, "_vis_anim", None)
-        if old is not None:
-            old.stop()
-        self._vis_goal = goal
-
-        anim = QVariantAnimation(self)
-        anim.setDuration(140)
-        anim.setStartValue(self.windowOpacity() if self.isVisible() else 0.0)
-        anim.setEndValue(1.0 if visible else 0.0)
-        anim.valueChanged.connect(self.setWindowOpacity)
-
-        def _done():
-            self._vis_anim = None
-            self._vis_goal = None
-            if not visible:
-                self.hide()
-            # Restore full opacity for the next plain show()/hide() cycle
-            self.setWindowOpacity(1.0)
-
-        anim.finished.connect(_done)
-        self._vis_anim = anim
-        if visible and not self.isVisible():
-            self.setWindowOpacity(0.0)
-            self.show()
-        anim.start()
-
-    def _cancel_fade(self):
-        """Manual show/hide must win over any in-flight automatic fade."""
-        anim = getattr(self, "_vis_anim", None)
-        if anim is not None:
-            anim.stop()
-        self._vis_anim = None
-        self._vis_goal = None
-        self.setWindowOpacity(1.0)
-
-    def _island_top_gap(self) -> int:
-        # The Drop hugs the bezel like a phone punch-hole camera
-        return 2 if self.island_idle == 25 else 6
-
     def _island_snap(self):
         """After a drag, glue the pill back to the top edge of its screen."""
         scr = self.screen()
@@ -2835,7 +2647,7 @@ class MusicWidget(QWidget):
             return
         a = scr.availableGeometry()
         x = max(a.left() + 4, min(self.x(), a.right() - self.width() - 4))
-        self.move(x, a.top() + self._island_top_gap())
+        self.move(x, a.top() + 6)
 
     def change_island_idle_from_action(self):
         action = self.sender()
@@ -2845,8 +2657,6 @@ class MusicWidget(QWidget):
         if self.current_scale_pct == 200:
             self._island_auto_timer.stop()
             self._apply_scale()
-            # Idle styles use different top gaps — re-glue to the edge
-            self._island_snap()
             self._update_ui(self.snapshot)
         self.save_settings()
 
@@ -2868,13 +2678,7 @@ class MusicWidget(QWidget):
         if cached is not None:
             return key, cached
 
-        # Prefer the worker-thread precomputed color; scan here only as a
-        # fallback so the GUI thread normally never touches pixels
-        accent = None
-        if self.snapshot.accent_rgb and self.snapshot.thumb == thumb:
-            accent = QColor(*self.snapshot.accent_rgb)
-        if accent is None:
-            accent = art_accent_color(thumb)
+        accent = art_accent_color(thumb)
         if accent is None:
             return None
 
@@ -3201,7 +3005,7 @@ class MusicWidget(QWidget):
         dur = self.snapshot.dur_sec
         show = (
             self.show_progress
-            and scale not in (25, 50)
+            and scale != 50
             and dur is not None and dur > 0
             and self._pos_base >= 0
         )
@@ -3238,16 +3042,14 @@ class MusicWidget(QWidget):
         size_cfg = SIZE_CONFIGS.get(self._layout_scale(), SIZE_CONFIGS[100])
         radius = max(0.0, size_cfg.get("card_radius", 14) - 1)
         alpha = self.current_transparency_pct / 100.0
-        dpr = self.devicePixelRatioF()
-        sig = (w, h, radius, alpha, len(thumb), hash(thumb), dpr)
+        sig = (w, h, radius, alpha, len(thumb), hash(thumb))
         if sig == self._last_bg_sig:
             self.bg_label.show()
             return
-        pm = blurred_bg_pixmap(thumb, w, h, radius, alpha, dpr)
+        pm = blurred_bg_pixmap(thumb, w, h, radius, alpha, self.devicePixelRatioF())
         if pm.isNull():
             self.bg_label.hide()
             return
-        self._last_bg_sig = sig
         self.bg_label.setPixmap(pm)
         self.bg_label.setGeometry(1, 1, w, h)
         self.bg_label.show()
@@ -3266,17 +3068,17 @@ class MusicWidget(QWidget):
             return
         size_cfg = SIZE_CONFIGS.get(self._layout_scale(), SIZE_CONFIGS[100])
         radius = size_cfg.get("card_radius", 14)
-        dpr = self.devicePixelRatioF()
-        sig = (w, h, radius, dpr)
+        sig = (w, h, radius)
         if sig != self._last_glass_sig:
             self._last_glass_sig = sig
-            pm = glass_overlay_pixmap(w, h, radius, 1.0, dpr)
+            pm = glass_overlay_pixmap(w, h, radius, 1.0, self.devicePixelRatioF())
             self.glass_label.setPixmap(pm)
             self.glass_label.setGeometry(0, 0, w, h)
         self.glass_label.show()
         # Stay above the blurred-art background but under all content
         self.glass_label.lower()
         self.bg_label.lower()
+        self._last_bg_sig = sig
 
     def _update_ui(self, snap: Snapshot):
         self.title.setText(snap.title or "No music playing")
@@ -3294,9 +3096,8 @@ class MusicWidget(QWidget):
             if source:
                 status_str = f"{status_str} • {source}"
 
-        # Don't overwrite a transient "Volume 45%" flash; skip identical text
-        # so the idle 1s poll doesn't trigger needless repaints
-        if not self._vol_flash_active and self.status_text.text() != status_str:
+        # Don't overwrite a transient "Volume 45%" flash
+        if not self._vol_flash_active:
             self.status_text.setText(status_str)
 
         self.prev_btn.setEnabled(snap.can_prev)
@@ -3449,7 +3250,6 @@ class MusicWidget(QWidget):
         if self._pin_forced_on_top:
             self._pin_forced_on_top = False
             self._set_on_top_hint(False)
-        self._cancel_fade()
         if not self.isVisible():
             self.show()
         self._update_pin_icon()
@@ -3485,26 +3285,6 @@ class MusicWidget(QWidget):
         if _is_pinnable_window(fg, my_pid):
             self._last_ext_hwnd = fg
 
-        # Fullscreen auto-hide: disappear while a fullscreen app (video, game,
-        # slideshow) owns the widget's monitor; return the moment it's gone.
-        # Wins over pin logic — a fullscreen app owns the whole screen.
-        if self.autohide_fullscreen:
-            fs_active = (
-                _is_pinnable_window(fg, my_pid)
-                and _is_fullscreen_window(fg)
-                and _hwnd_monitor(fg) == _hwnd_monitor(int(self.winId()))
-            )
-            if fs_active:
-                if self.isVisible() and self._vis_goal != "hide":
-                    self._fs_hidden = True
-                    self._fade_to(False)
-                return
-            if self._fs_hidden:
-                self._fs_hidden = False
-                if not self._pin_target_hwnd:
-                    self._fade_to(True)
-                # else: fall through — the pin logic below decides
-
         target = self._pin_target_hwnd
         if not target:
             return
@@ -3523,9 +3303,11 @@ class MusicWidget(QWidget):
             )
 
         # Act immediately — any confirmation delay makes the widget feel
-        # detached from the window it's pinned to. The fade handles the
-        # visual softness; state changes still start within one 60ms tick.
-        self._fade_to(want_visible)
+        # detached from the window it's pinned to.
+        if want_visible and not self.isVisible():
+            self.show()
+        elif not want_visible and self.isVisible():
+            self.hide()
 
     def _tray_activated(self, reason):
         if reason in (
@@ -3535,8 +3317,6 @@ class MusicWidget(QWidget):
             if self.isVisible():
                 if self._pin_target_hwnd:
                     self._unpin()
-                self._cancel_fade()
-                self._fs_hidden = False
                 self.hide()
             else:
                 self.show_from_tray()
@@ -3546,8 +3326,6 @@ class MusicWidget(QWidget):
         # immediately re-show the widget.
         if self._pin_target_hwnd:
             self._unpin()
-        self._cancel_fade()
-        self._fs_hidden = False
         self.hide()
         if self.tray.isVisible():
             self.tray.showMessage(
@@ -3560,21 +3338,9 @@ class MusicWidget(QWidget):
     def show_from_tray(self):
         if self._pin_target_hwnd:
             self._unpin()
-        self._cancel_fade()
         self.show()
         self.raise_()
         self.activateWindow()
-
-    def toggle_widget_visible(self):
-        if self.isVisible():
-            self.hide_to_tray()
-        else:
-            self.show_from_tray()
-
-    def _sync_show_hide_label(self):
-        self.show_hide_action.setText(
-            "Hide Widget" if self.isVisible() else "Show Widget"
-        )
 
     def closeEvent(self, event):
         event.ignore()
@@ -3586,7 +3352,7 @@ class MusicWidget(QWidget):
     def _seek_available(self) -> bool:
         return (
             self.show_progress
-            and self._layout_scale() not in (25, 50)
+            and self._layout_scale() != 50
             and self.snapshot.can_seek
             and self.snapshot.dur_sec is not None
             and self.snapshot.dur_sec > 0
@@ -3754,9 +3520,7 @@ class MusicWidget(QWidget):
             self.status_text.setText(text)
         else:
             # XS / S have no status line: one small centered pill whose text
-            # updates while scrolling. The Drop is too narrow for full text.
-            if self.card.width() < 120:
-                text = text.replace("Volume ", "")
+            # updates while scrolling.
             self.vol_overlay.setText(text)
             self.vol_overlay.adjustSize()
             self.vol_overlay.move(
@@ -3808,8 +3572,7 @@ class MusicWidget(QWidget):
             return
         radius = size_cfg.get("art_radius", 8)
         theme_code = self.last_theme_code or "theme_1"
-        # dpr in the signature: moving to a different-DPI monitor re-renders
-        sig = (art_size, radius, theme_code, len(thumb), dpr)
+        sig = (art_size, radius, theme_code, len(thumb))
         if thumb == self._last_thumb_data and sig == self._last_art_sig:
             return
         pm = rounded_art_pixmap(thumb, art_size, art_size, radius, dpr) if thumb else QPixmap()
