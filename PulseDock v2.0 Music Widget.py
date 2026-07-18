@@ -1744,16 +1744,21 @@ class MusicWidget(QWidget):
         self._vis_anim = None
         self._vis_goal = None
 
-        # Dynamic Island mode (scale 200): both states reuse existing layouts —
-        # idle shows Drop / XS / S, hover expands into Normal or Mini Card
+        # Dynamic Island modes (scale 200 Top / 201 Floating): both states
+        # reuse existing layouts — idle shows Drop / XS / S, hover expands into
+        # Normal or Mini Card
         self.island_idle = self.settings.get("island_idle", 50)
         if self.island_idle not in (25, 50, 75):
             self.island_idle = 50
         self.island_expand = self.settings.get("island_expand", 100)
         if self.island_expand not in (100, 125):
             self.island_expand = 100
+        # Top and Floating each remember their own resting spot, so switching
+        # between them doesn't drag one to the other's position
         ix, iy = self.settings.get("island_x"), self.settings.get("island_y")
-        self._island_pos = (ix, iy) if isinstance(ix, int) and isinstance(iy, int) else None
+        self._island_pos_top = (ix, iy) if isinstance(ix, int) and isinstance(iy, int) else None
+        fx, fy = self.settings.get("island_float_x"), self.settings.get("island_float_y")
+        self._island_pos_float = (fx, fy) if isinstance(fx, int) and isinstance(fy, int) else None
         self._normal_pos = (self.settings.get("x", 100), self.settings.get("y", 100))
         self._island_expanded = False
         self._island_on_top = False
@@ -1885,6 +1890,8 @@ class MusicWidget(QWidget):
             "island_idle": 50,
             "island_x": None,
             "island_y": None,
+            "island_float_x": None,
+            "island_float_y": None,
             "x": 100,
             "y": 100
         }
@@ -1913,9 +1920,11 @@ class MusicWidget(QWidget):
             "autohide_fullscreen": self.autohide_fullscreen,
             "island_expand": self.island_expand,
             "island_idle": self.island_idle,
-            "island_x": self._island_pos[0] if self._island_pos else None,
-            "island_y": self._island_pos[1] if self._island_pos else None,
-            # Island keeps its own position; x/y stay the normal-mode spot
+            "island_x": self._island_pos_top[0] if self._island_pos_top else None,
+            "island_y": self._island_pos_top[1] if self._island_pos_top else None,
+            "island_float_x": self._island_pos_float[0] if self._island_pos_float else None,
+            "island_float_y": self._island_pos_float[1] if self._island_pos_float else None,
+            # Each island variant keeps its own position; x/y stay the normal-mode spot
             "x": self._normal_pos[0],
             "y": self._normal_pos[1]
         }
@@ -1932,11 +1941,11 @@ class MusicWidget(QWidget):
         super().moveEvent(event)
         anim = getattr(self, "_geo_anim", None)
         animating = anim is not None and anim.state() == QAbstractAnimation.State.Running
-        if getattr(self, "current_scale_pct", None) == 200:
+        if getattr(self, "current_scale_pct", None) in (200, 201):
             # Only remember the collapsed resting spot — expanded/animated
             # positions are transient
             if not animating and not getattr(self, "_island_expanded", False):
-                self._island_pos = (self.x(), self.y())
+                self._island_pos_set((self.x(), self.y()))
         else:
             self._normal_pos = (self.x(), self.y())
         if hasattr(self, "_save_timer"):
@@ -2246,7 +2255,9 @@ class MusicWidget(QWidget):
             self.artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             layout = QVBoxLayout(self.card)
-            layout.setContentsMargins(8, 8, 8, 8)
+            # Extra bottom margin lifts the control row off the card's edge so
+            # the progress bar (and its hover knob) sits fully clear below it
+            layout.setContentsMargins(8, 8, 8, 14)
             layout.setSpacing(0)
 
             art_row = QHBoxLayout()
@@ -2290,7 +2301,9 @@ class MusicWidget(QWidget):
             self.status_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             layout = QVBoxLayout(self.card)
-            layout.setContentsMargins(16, 12, 16, 12)
+            # Extra bottom margin lifts the control row off the card's edge so
+            # the progress bar (and its hover knob) sits fully clear below it
+            layout.setContentsMargins(16, 12, 16, 18)
             layout.setSpacing(4)
 
             art_row = QHBoxLayout()
@@ -2503,7 +2516,8 @@ class MusicWidget(QWidget):
             ("Normal (N)", 100),
             ("Mini Card (M)", 125),
             ("Large (L)", 150),
-            ("Dynamic Island", 200),
+            ("Dynamic Island (Top)", 200),
+            ("Dynamic Island (Floating)", 201),
         ]
         self.size_actions = {}
         for label, pct in size_levels:
@@ -2679,17 +2693,35 @@ class MusicWidget(QWidget):
             return 216, 344  # taller for big album art on top
         return 330, 76
 
+    def _is_island(self) -> bool:
+        """Both Dynamic Island variants — Top (200, glued to the bezel) and
+        Floating (201, movable and centre-expanding) — share the same core."""
+        return self.current_scale_pct in (200, 201)
+
+    def _island_is_floating(self) -> bool:
+        return self.current_scale_pct == 201
+
+    def _island_pos_get(self):
+        """Resting position for the active island variant (None until placed)."""
+        return self._island_pos_float if self._island_is_floating() else self._island_pos_top
+
+    def _island_pos_set(self, pos):
+        if self._island_is_floating():
+            self._island_pos_float = pos
+        else:
+            self._island_pos_top = pos
+
     def _layout_scale(self) -> int:
         """Scale whose layout is currently on screen. Dynamic Island keeps
-        current_scale_pct == 200 but always borrows existing layouts: the
+        current_scale_pct at 200/201 but always borrows existing layouts: the
         idle size (XS/S) collapsed, the expand size (Normal/Mini) on hover."""
-        if self.current_scale_pct == 200:
+        if self._is_island():
             return self.island_expand if self._island_expanded else self.island_idle
         return self.current_scale_pct
 
     def _apply_scale(self):
         scale = self.current_scale_pct
-        island = scale == 200
+        island = scale in (200, 201)
 
         anim = getattr(self, "_geo_anim", None)
         if anim is not None:
@@ -2716,12 +2748,20 @@ class MusicWidget(QWidget):
         self.setFixedSize(new_w, new_h)
 
         if island:
-            if self._island_pos is None:
+            pos = self._island_pos_get()
+            if pos is None:
                 scr = self.screen() or QApplication.primaryScreen()
                 a = scr.availableGeometry()
-                self._island_pos = (a.center().x() - new_w // 2,
-                                    a.top() + self._island_top_gap())
-            self.move(*self._island_pos)
+                if self._island_is_floating():
+                    # Floating: default to the middle of the screen so it can
+                    # grow evenly in every direction on hover
+                    pos = (a.center().x() - new_w // 2,
+                           a.center().y() - new_h // 2)
+                else:
+                    pos = (a.center().x() - new_w // 2,
+                           a.top() + self._island_top_gap())
+                self._island_pos_set(pos)
+            self.move(*pos)
         else:
             self.move(*self._normal_pos)
 
@@ -2729,26 +2769,38 @@ class MusicWidget(QWidget):
 
     # --- Dynamic Island -------------------------------------------------
     def _set_island_expanded(self, expanded: bool):
-        if self.current_scale_pct != 200 or expanded == self._island_expanded:
+        if not self._is_island() or expanded == self._island_expanded:
             return
         self._island_expanded = expanded
         target_scale = self._layout_scale()
         tw, th = self._scale_window_size(target_scale)
 
-        # Anchor the animation to the pill's top edge and horizontal center,
-        # so it grows downward/outward like the real island
         g = self.geometry()
         cx = g.x() + g.width() // 2
-        tx, ty = cx - tw // 2, g.y()
+        if self._island_is_floating():
+            # Floating: grow (and shrink) symmetrically about the centre, so
+            # the frame swells evenly from all four sides — not just downward
+            cy = g.y() + g.height() // 2
+            tx, ty = cx - tw // 2, cy - th // 2
+        else:
+            # Top: anchor the pill's top edge and horizontal centre, so it
+            # grows downward/outward like the real Dynamic Island
+            tx, ty = cx - tw // 2, g.y()
         scr = self.screen()
         if scr is not None:
             a = scr.availableGeometry()
             tx = max(a.left() + 4, min(tx, a.right() - tw - 4))
+            if self._island_is_floating():
+                ty = max(a.top() + 4, min(ty, a.bottom() - th - 4))
 
         self._rebuild_card_layout(target_scale)
         # Force a restyle at the new layout scale (fonts, radii, art size)
         self.last_theme_code = None
         self._apply_theme_style()
+        # The expanded layout (Normal/Mini) allows seeking where the collapsed
+        # idle one (Drop/XS) did not — refresh the timeline-hover state now that
+        # _layout_scale() reflects the new size, so the seek bar lights up
+        self._update_seek_hover()
         self._animate_geometry(QRect(tx, ty, tw, th))
 
     def _animate_geometry(self, target: QRect):
@@ -2775,7 +2827,7 @@ class MusicWidget(QWidget):
         self._update_glass_overlay()
 
     def _island_auto_collapse(self):
-        if self.current_scale_pct == 200 and not self._hovering:
+        if self._is_island() and not self._hovering:
             self._set_island_expanded(False)
 
     def _fade_to(self, visible: bool):
@@ -2842,11 +2894,13 @@ class MusicWidget(QWidget):
         if not action:
             return
         self.island_idle = action.data()
-        if self.current_scale_pct == 200:
+        if self._is_island():
             self._island_auto_timer.stop()
             self._apply_scale()
-            # Idle styles use different top gaps — re-glue to the edge
-            self._island_snap()
+            # Top idle styles use different top gaps — re-glue to the edge.
+            # Floating stays wherever the user parked it.
+            if not self._island_is_floating():
+                self._island_snap()
             self._update_ui(self.snapshot)
         self.save_settings()
 
@@ -2855,7 +2909,7 @@ class MusicWidget(QWidget):
         if not action:
             return
         self.island_expand = action.data()
-        if self.current_scale_pct == 200 and self._island_expanded:
+        if self._is_island() and self._island_expanded:
             # Re-expand into the newly chosen layout
             self._set_island_expanded(False)
             self._set_island_expanded(True)
@@ -3178,7 +3232,7 @@ class MusicWidget(QWidget):
             self._last_seen_aumid = snap.aumid
         # Island signature move: peek open for a moment on track change
         if (
-            self.current_scale_pct == 200
+            self._is_island()
             and self._island_last_title is not None
             and snap.title != self._island_last_title
             and not self._hovering
@@ -3661,10 +3715,12 @@ class MusicWidget(QWidget):
         super().enterEvent(event)
         self._hovering = True
         self._set_xs_hover(True)
-        self._update_seek_hover()
-        if self.current_scale_pct == 200:
+        if self._is_island():
             self._island_auto_timer.stop()
             self._set_island_expanded(True)
+        # After any island expansion so _layout_scale() reflects the seekable
+        # size — otherwise the timeline never lights up on the collapsed idle
+        self._update_seek_hover()
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
@@ -3672,7 +3728,7 @@ class MusicWidget(QWidget):
         self._set_xs_hover(False)
         if not self._seeking:
             self.progress_line.set_hover(False)
-        if self.current_scale_pct == 200:
+        if self._is_island():
             self._island_auto_timer.stop()
             self._set_island_expanded(False)
 
@@ -3682,7 +3738,7 @@ class MusicWidget(QWidget):
             return
         # Island idle borrows the XS layout but hover expands the card instead
         # of swapping to buttons — always render the rest state there
-        if self.current_scale_pct == 200:
+        if self._is_island():
             hovering = False
         # Rest state keeps extra right padding for the text; hovering equalizes
         # the margins and zeroes the text column's stretch (a nested layout
