@@ -1,148 +1,152 @@
 # PulseDock Widget 🎵
 
-PulseDock Widget is a sleek, modern, and highly-customizable floating media controller for Windows 11. It integrates directly with the Windows Global System Media Transport Controls (SMTC) to display real-time playback info (title, artist, state) and control active media players like Spotify, YouTube Music, VLC, Edge, Chrome, and more.
+PulseDock is a sleek, frameless, always-on-top floating media controller for Windows 11. It hooks straight into the Windows Global System Media Transport Controls (SMTC) to show real-time playback info — title, artist, album art, progress — and control any active media player: Spotify, YouTube Music, VLC, Edge, Chrome, and more.
 
-Built with **PyQt6** and **Python Windows SDK (`winsdk`)**, it features a lightweight, frameless, and adaptive design that updates its theme based on the active media player.
+Built with **PyQt6** and the **Windows SDK (`winsdk`)**, it's lightweight, adaptive, and themes itself to whatever you're listening to.
 
 <p align="center">
-  <img src="sample%20images/2.png" alt="PulseDock Widget Theme Presets" width="650">
+  <img src="sample%20images/v2/01_normal_auto.png" alt="PulseDock Widget — Normal mode with album art" width="520">
+</p>
+
+<p align="center">
+  <img src="sample%20images/v2/island_expand.gif" alt="Dynamic Island — expands on track change, then collapses" width="620"><br>
+  <sub>🏝️ <b>Dynamic Island mode</b> — the pill expands when the track changes, then melts back down.</sub>
 </p>
 
 ---
 
 ## ✨ Features
 
-- **Direct Windows SMTC Integration**: Reads media metadata (title, artist, player origin) and sends controls (Play/Pause, Next, Previous) asynchronously without blocking.
-- **Album Art (v2.0)**: Displays the current track's cover art with rounded corners in Normal, Wide, and Large modes — fetched straight from the media session and cached per track. Shows a themed music-note placeholder when no art is available.
-- **Volume & Mute Control (v2.0)**: Scroll the mouse wheel anywhere on the widget to raise/lower the system master volume (5% per notch, touchpad friendly), and click the speaker button to mute/unmute. The speaker icon reflects the live state (off / low / high) and a tooltip + status flash shows the volume percentage. Implemented with raw Core Audio COM — no extra dependencies.
-- **Dynamic Auto-Theme**: Automatically switches appearance matching the active source app (e.g., Spotify, YouTube Music) or lets you pick classic, dark, or warm custom themes manually.
-- **Multi-Size Layouts**: Supports 5 preset sizes: Extra Small (XS) button-only mode, Small, Normal, Wide, and Large. Normal/Wide place the art beside the track info; Large shows a big cover on top, mini-player style.
-
-- **Customizable Opacity**: Adjust transparency levels from 20% to 100% for a subtle desktop integration.
-- **Settings Persistence**: Saves your layout position, window scaling, transparency, active theme preference, and "Always on Top" settings under `%LocalAppData%\PulseDock Widget\settings.json`.
-- **System Tray Controls**: Run in the background, minimize to tray, toggle "Always on Top", switch styles, or hide/show the widget easily via the system tray context menu.
-<p align="center">
-  <b>Tray Icon Pin</b><br>
-  <img src="sample%20images/5.png" alt="Tray bar" width="400">
-</p>
----
-
-## 🎨 Theme Presets
-
-PulseDock comes with several custom color schemes:
-1. **Auto (Dynamic)**: Detects your active media player and applies matching brand styles.
-2. **Spotify Black / Spotify White**: True dark and light themes with Spotify Green accents.
-3. **YouTube Music Black / YouTube Music White**: Red accent styling optimized for YouTube Music.
-4. **Midnight Drive (Theme 1)**: Deep dark blue background with emerald green accents.
-5. **Daylight (Theme 2)**: Crisp light-grey interface with sky blue highlights.
-6. **Coffee & Cigarettes (Theme 5)**: Warm vintage brown/coffee aesthetic.
+- **Direct Windows SMTC Integration** — Reads media metadata (title, artist, source app) and sends Play/Pause/Next/Previous asynchronously, without ever blocking the UI.
+- **🏝️ Dynamic Island (v2.0)** — iPhone-style island that docks to the top of your screen (or floats anywhere). Rests as a compact pill — or a bare circular album-art "Drop" — and smoothly expands to full controls on hover or track change, then auto-collapses.
+- **Album Art Everywhere (v2.0)** — Cover art with rounded corners in every layout, fetched straight from the media session and cached per track. Optional **High-Res Album Art (Online)** lookup and an **Album Art Background** mode that blurs the cover into the card itself.
+- **Live Progress Bar (v2.0)** — A slim accent-colored progress line tracks the song position along the bottom edge of the card.
+- **Scrolling Song Text (v2.0)** — Long titles marquee smoothly instead of truncating.
+- **Volume & Mute (v2.0)** — Scroll the mouse wheel anywhere on the widget to change system volume (5% per notch, touchpad friendly); click the speaker to mute/unmute. Implemented with raw Core Audio COM — zero extra dependencies.
+- **Dynamic Auto-Theme** — Matches the active player's brand style (Spotify green, YouTube Music red, …) or derives an accent palette straight from the album art. Manual themes included.
+- **7 Size Modes** — Drop (art only), Extra Small, Small, Normal, Mini Card, Large, plus the two Dynamic Island modes.
+- **Desktop-Native Behavior** — Always on Top, Pin to Active Window, Auto-Hide on Fullscreen (games/videos/slides), Launch on Startup, adjustable transparency (20–100%).
+- **Settings Persistence** — Position, size, theme, transparency and every toggle saved atomically under `%LocalAppData%\PulseDock Widget\settings.json`.
+- **System Tray Control Center** — Everything is two clicks away from the tray icon.
 
 ---
 
-## 📸 Screenshots
+## 📐 Size Modes
+
+| Large (Mini-Player) | Mini Card | Normal |
+|:---:|:---:|:---:|
+| <img src="sample%20images/v2/02_large.png" width="230"> | <img src="sample%20images/v2/03_mini_card.png" width="240"> | <img src="sample%20images/v2/01_normal_auto.png" width="380"> |
+
+| Small | Extra Small | Drop (Art Only) |
+|:---:|:---:|:---:|
+| <img src="sample%20images/v2/04_small.png" width="330"> | <img src="sample%20images/v2/05_xs.png" width="240"> | <img src="sample%20images/v2/06_drop.png" width="150"> |
+
+**Large** is a full vertical mini-player: big cover, source app, elapsed/total time. **Drop** is a single floating circle of album art — the most minimal player you'll ever run.
+
+---
+
+## 🏝️ Dynamic Island
+
+Two island modes, straight from the tray menu:
+
+- **Dynamic Island (Top)** — docks to the top-center of your screen like a notch companion.
+- **Dynamic Island (Floating)** — same behavior, parked wherever you drop it.
+
+Pick the **idle size** (Drop / XS / Small) and the **expanded size** (Normal / Mini Card). The island expands on hover or when the song changes, shows full controls for a moment, and collapses back on its own.
 
 <p align="center">
-  <b>Multi-Size Layouts (from 50% XS to 150% L) & Custom Styles</b><br>
-  <img src="sample%20images/1.png" alt="Multi-Size Layouts" width="500">
+  <img src="sample%20images/v2/11_island_top.png" alt="Island idle pill docked at top of screen" width="400"><br>
+  <sub>Idle pill docked at the top — title marquees while it rests.</sub>
 </p>
 
-<br>
+---
+
+## 🎨 Themes
+
+**Auto (Dynamic)** detects the active player and matches its brand colors — or builds a palette from the album art itself. Prefer a fixed look? Pick one:
+
+| Midnight Drive | Daylight |
+|:---:|:---:|
+| <img src="sample%20images/v2/07_theme_midnight.png" width="380"> | <img src="sample%20images/v2/08_theme_daylight.png" width="380"> |
+
+| Coffee & Cigarettes | Spotify Black |
+|:---:|:---:|
+| <img src="sample%20images/v2/09_theme_coffee.png" width="380"> | <img src="sample%20images/v2/10_theme_spotify.png" width="380"> |
+
+Also included: **Spotify White**, **YouTube Music Black**, **YouTube Music White**.
+
+---
+
+## ⚙️ Tray Control Center
+
+Right-click the PulseDock tray icon for every setting — no config files to touch:
 
 <p align="center">
-  <b>Seamless Desktop Integration</b><br>
-  <img src="sample%20images/4.png" alt="Desktop Integration" width="500">
-</p>
-
-<br>
-
-<p align="center">
-  <b>Visual Studio Code Development Environment</b><br>
-  <img src="sample%20images/3.png" alt="Development Environment" width="650">
+  <img src="sample%20images/v2/12_tray_menu.png" alt="Tray menu: Always on Top, Pin to Active Window, Launch on Startup, Auto-Hide on Fullscreen, Album Art Background, High-Res Album Art, Show Progress Bar, Scrolling Song Text, Themes, Transparency, Size, Dynamic Island" width="340">
 </p>
 
 ---
 
 ## 🛠️ Prerequisites & Setup
 
-PulseDock requires Windows 10 or Windows 11 because it utilizes the Windows Runtime (WinRT) APIs for media session tracking.
-
-### Dependencies
-Install the required dependencies via `pip`:
+PulseDock requires Windows 10/11 (it uses WinRT media session APIs).
 
 ```bash
 pip install PyQt6 winsdk
 ```
 
----
-
 ## 🚀 How to Run
 
-Clone the repository and run the widget directly:
-
 ```bash
-python pulse_dock_music_widget.py
+python "PulseDock v2.0 Music Widget.py"
 ```
 
-### Dragging & Desktop Control
-- **Move Widget**: Click and drag anywhere on the widget to reposition it on your desktop.
-- **Volume**: Scroll the mouse wheel anywhere over the widget to adjust the system volume (works in every size mode). Scrolling up while muted automatically unmutes.
-- **Mute**: Click the speaker button (Normal, Wide, and Large modes) to toggle mute. Muting preserves your volume level; unmuting restores it.
-- **System Tray**: Right-click the PulseDock tray icon (usually in the bottom right corner of the taskbar) to open the configuration menu.
-- **Minimize to Tray**: Click the small down arrow in the top right of the widget (visible at `75%` scale and above) to hide it. Left-click or right-click the system tray icon to bring it back.
+### Controls Cheat Sheet
+- **Move** — click & drag anywhere on the widget.
+- **Volume** — mouse wheel anywhere over the widget (scrolling up while muted auto-unmutes).
+- **Mute** — click the speaker icon (Normal and larger modes). Unmuting restores your previous level.
+- **Minimize to tray** — click the small chevron in the top-right corner; click the tray icon to bring it back.
+- **Everything else** — right-click the tray icon.
 
 ---
 
-## 📦 Building a Standalone Executable (`.exe`)
+## 📦 Building a Standalone Executable
 
-You can compile PulseDock into a standalone, windowed Windows executable using PyInstaller. A pre-configured `.spec` file is included in this repository.
+A pre-configured PyInstaller `.spec` is included:
 
-1. Install PyInstaller:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Build the app using the spec file:
-   ```bash
-   pyinstaller pulse_dock_music_widget.spec
-   ```
-3. Find your standalone executable in the `dist/` directory:
-   - `dist/pulse_dock_music_widget.exe` (includes embedded icons and assets).
+```bash
+pip install pyinstaller
+pyinstaller "PulseDock Widget.spec"
+```
+
+Your standalone build lands in `dist/PulseDock Widget.exe` with icons and assets embedded.
 
 ---
 
 ## 📂 File Structure
 
 ```plaintext
-├── pulse_dock_music_widget.py      # Core widget application code
-├── pulse_dock_music_widget.spec    # PyInstaller compilation instructions
-├── PulseDock.ico                 # Main application & tray icon
-├── icons/                        # Core SVG icons (dynamically colored at runtime)
-│   ├── down.svg
-│   ├── pause.svg
-│   ├── play_arrow.svg
-│   ├── refresh.svg
-│   ├── skip_next.svg
-│   └── skip_previous.svg
-└── README.md                     # Documentation
+├── PulseDock v2.0 Music Widget.py   # Core widget application
+├── PulseDock Widget.spec            # PyInstaller build recipe
+├── PulseDock.ico                    # App & tray icon
+├── icons/                           # SVG icons (recolored at runtime per theme)
+├── sample images/                   # README media
+└── README.md
 ```
 
 ---
 
-## ⚙️ How it Works Under the Hood
+## 🔩 How It Works Under the Hood
 
-1. **COM Multi-Threaded Apartment (MTA)**:
-   The Windows SDK media APIs require COM to be initialized in a Multi-Threaded Apartment. PulseDock utilizes a specialized `QThread` (`SMTCWorker`) that triggers `CoInitializeEx` and periodically checks active sessions on a background task pool using asynchronous coroutines.
-2. **Dynamic UI Re-Styling**:
-   Whenever the track updates, the background worker sends a thread-safe Qt Signal to the main GUI thread. The widget updates text dimensions, evaluates the appropriate colors, compiles a custom Qt Style Sheet (QSS), reads SVG icon data, dynamically replaces color hex codes inside the SVG markup, and saves them to a local cache directory (`%LocalAppData%\PulseDock Widget\icon_cache`).
-3. **Robust Cleanup**:
-   If a WinRT query hangs during application shutdown, the cleanup cycle will attempt to shut down the background thread cleanly and force-terminates it after 3 seconds to guarantee that the application process never leaks or hangs in the Task Manager.
+1. **COM Multi-Threaded Apartment** — WinRT media APIs need an MTA; a dedicated `QThread` (`SMTCWorker`) runs `CoInitializeEx` and polls active sessions with async coroutines, then hands snapshots to the GUI thread via Qt signals.
+2. **Dynamic Restyling** — On every track change the widget recompiles its QSS, recolors the SVG icon set to the active theme (cached in `%LocalAppData%\PulseDock Widget\icon_cache`), and — in Auto mode — votes across hue buckets of the cover art to derive the accent color.
+3. **Core Audio, no dependencies** — Volume/mute talk directly to `IAudioEndpointVolume` via raw COM vtables in ctypes.
+4. **Robust Cleanup** — If a WinRT call hangs at shutdown, the worker is force-terminated after 3s so the process never lingers in Task Manager.
 
 ---
 
 ## 💡 Troubleshooting
 
-- **"winsdk is not installed"**:
-  Make sure you are on Windows and have run `pip install winsdk`. This widget does not support macOS or Linux because it depends on Windows media transport sessions.
-- **No media controls appearing or showing "No music playing"**:
-  Open your media player (e.g. Spotify, YouTube Music, Edge/Chrome tab playing audio) and start playback. The Windows OS requires at least one active media transport control session to register the widget.
-- **Crash logs**:
-  If a critical exception occurs, PulseDock creates a `crash_log.txt` in the root folder containing the stack trace to help debug the issue.
+- **"winsdk is not installed"** — `pip install winsdk` (Windows only; no macOS/Linux support).
+- **"No music playing"** — Start playback in any SMTC-aware player (Spotify, YT Music, a browser tab). Windows needs at least one active media session.
+- **Crash logs** — Critical errors write `crash_log.txt` under `%LocalAppData%\PulseDock Widget\` with the full stack trace.
