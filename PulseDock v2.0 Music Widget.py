@@ -50,6 +50,7 @@ from PyQt6.QtGui import (
     QColor,
     QPolygon,
     QRadialGradient,
+    QRegion,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -199,6 +200,20 @@ SIZE_CONFIGS = {
         "art_size": 40,
         "art_radius": 20,
     },
+    26: {  # XS (Round) - standalone size: 2x Drop circle of art; hover reveals the buttons
+        "play_size": 28,
+        "play_radius": 14,
+        "skip_size": 22,
+        "skip_radius": 11,
+        "icon_play": 16,
+        "icon_skip": 13,
+        "title_size": 9,
+        "artist_size": 8,
+        "status_size": 8,
+        "card_radius": 48,  # half the 96px window = full circle
+        "art_size": 96,     # art fills the circle; buttons overlay on hover
+        "art_radius": 48,
+    },
     50: {
         "play_size": 28,
         "play_radius": 14,
@@ -272,6 +287,20 @@ SIZE_CONFIGS = {
         "art_radius": 14,
         "vol_size": 18,
         "icon_vol": 12,
+    },
+    175: {  # Circle - Dynamic Island expanded round card: circular art + text + controls inside a circle
+        "play_size": 28,
+        "play_radius": 14,
+        "skip_size": 22,
+        "skip_radius": 11,
+        "icon_play": 16,
+        "icon_skip": 13,
+        "title_size": 11,
+        "artist_size": 9,
+        "status_size": 8,
+        "card_radius": 92,   # half the 184px window = full circle
+        "art_size": 96,      # large art fills the circle, minimal dead space
+        "art_radius": 48,    # half the art = circular album art
     }
 }
 
@@ -586,6 +615,54 @@ def rounded_art_pixmap(data: bytes, width: int, height: int, radius: float, dpr:
     p.setClipPath(clip)
     p.drawPixmap(0, 0, scaled)
     p.end()
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
+def circular_art_scrim_pixmap(data: bytes, size: int, dpr: float = 1.0) -> QPixmap:
+    """Full-circle album art with baked top/bottom dark scrims.
+
+    Circle mode overlays the title (top) and playback buttons (bottom) directly
+    on the art, so the gradients keep that text/iconography legible without
+    darkening the middle of the artwork.
+    """
+    src = QPixmap()
+    if not data or not src.loadFromData(data):
+        return QPixmap()
+
+    px = max(1, int(round(size * dpr)))
+    scaled = src.scaled(
+        px, px,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    x = (scaled.width() - px) // 2
+    y = (scaled.height() - px) // 2
+    scaled = scaled.copy(x, y, px, px)
+
+    out = QPixmap(px, px)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    clip = QPainterPath()
+    clip.addEllipse(QRectF(0, 0, px, px))
+    p.setClipPath(clip)
+    p.drawPixmap(0, 0, scaled)
+
+    # Top scrim behind the title/artist
+    g_top = QLinearGradient(0, 0, 0, px * 0.40)
+    g_top.setColorAt(0.0, QColor(0, 0, 0, 175))
+    g_top.setColorAt(1.0, QColor(0, 0, 0, 0))
+    p.fillRect(QRectF(0, 0, px, px * 0.40), QBrush(g_top))
+
+    # Bottom scrim behind the controls
+    g_bot = QLinearGradient(0, px * 0.55, 0, px)
+    g_bot.setColorAt(0.0, QColor(0, 0, 0, 0))
+    g_bot.setColorAt(1.0, QColor(0, 0, 0, 200))
+    p.fillRect(QRectF(0, px * 0.55, px, px * 0.45), QBrush(g_bot))
+    p.end()
+
     out.setDevicePixelRatio(dpr)
     return out
 
@@ -1295,6 +1372,106 @@ def _is_fullscreen_window(hwnd: int) -> bool:
         return False
 
 
+# --- Find/activate an existing app window by AppUserModelID ------------------
+# Clicking the album art should bring the *already-running* player forward, not
+# spawn a fresh window. Browser-hosted players (YT Music PWA) and some apps
+# launch a new window when re-invoked via shell:AppsFolder, so we first look for
+# a live top-level window whose AUMID matches the media session and focus that.
+
+class _PROPVARIANT(ctypes.Structure):
+    # 8-byte header (vt + 3 reserved WORDs) then an 8-byte union; the trailing
+    # padding keeps us at/over the real 16-byte struct size on 32- and 64-bit.
+    _fields_ = [
+        ("vt", ctypes.c_ushort),
+        ("r1", ctypes.c_ushort),
+        ("r2", ctypes.c_ushort),
+        ("r3", ctypes.c_ushort),
+        ("val", ctypes.c_void_p),
+        ("_pad", ctypes.c_ulonglong),
+    ]
+
+
+class _PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", ctypes.c_ulong)]
+
+
+_VT_LPWSTR = 31
+_IID_IPropertyStore = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
+_FMTID_AppUserModel = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"  # PKEY_AppUserModel_ID
+
+
+def _hwnd_visible(hwnd: int) -> bool:
+    try:
+        return bool(ctypes.windll.user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False
+
+
+def _window_aumid(hwnd: int) -> str:
+    """Best-effort AppUserModelID stamped on a top-level window ("" on failure)."""
+    store = ctypes.c_void_p()
+    try:
+        riid = _guid(_IID_IPropertyStore)
+        hr = ctypes.windll.shell32.SHGetPropertyStoreForWindow(
+            ctypes.c_void_p(hwnd), ctypes.byref(riid), ctypes.byref(store))
+        if hr != 0 or not store:
+            return ""
+        pk = _PROPERTYKEY()
+        pk.fmtid = _guid(_FMTID_AppUserModel)
+        pk.pid = 5  # PID of PKEY_AppUserModel_ID
+        pv = _PROPVARIANT()
+        # IPropertyStore::GetValue is vtable index 5
+        hr = _com_call(store, 5, (ctypes.c_void_p, ctypes.c_void_p),
+                       ctypes.byref(pk), ctypes.byref(pv))
+        try:
+            if hr == 0 and pv.vt == _VT_LPWSTR and pv.val:
+                return ctypes.wstring_at(pv.val)
+        finally:
+            ctypes.windll.ole32.PropVariantClear(ctypes.byref(pv))
+        return ""
+    except Exception:
+        return ""
+    finally:
+        if store:
+            try:
+                _com_call(store, 2, ())  # IUnknown::Release
+            except Exception:
+                pass
+
+
+def _find_window_by_aumid(target_aumid: str) -> int:
+    """First visible, titled top-level window whose AUMID matches (0 if none)."""
+    target = (target_aumid or "").strip().lower()
+    if not target:
+        return 0
+    found = {"hwnd": 0}
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def _cb(hwnd, _lparam):
+        h = int(hwnd)
+        if _hwnd_visible(h) and _hwnd_title(h) and _window_aumid(h).strip().lower() == target:
+            found["hwnd"] = h
+            return False  # stop enumerating
+        return True
+
+    try:
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(_cb), 0)
+    except Exception:
+        pass
+    return found["hwnd"]
+
+
+def _activate_hwnd(hwnd: int) -> bool:
+    """Restore (if minimized) and bring a window to the foreground."""
+    try:
+        u = ctypes.windll.user32
+        if _hwnd_minimized(hwnd):
+            u.ShowWindow(ctypes.c_void_p(hwnd), 9)  # SW_RESTORE
+        return bool(u.SetForegroundWindow(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False
+
+
 class SystemVolume:
     """Windows master volume + mute via Core Audio (IAudioEndpointVolume).
 
@@ -1746,12 +1923,12 @@ class MusicWidget(QWidget):
 
         # Dynamic Island modes (scale 200 Top / 201 Floating): both states
         # reuse existing layouts — idle shows Drop / XS / S, hover expands into
-        # Normal or Mini Card
+        # Small / Normal / Mini Card / Large / Circle
         self.island_idle = self.settings.get("island_idle", 50)
-        if self.island_idle not in (25, 50, 75):
+        if self.island_idle not in (25, 26, 50, 75):
             self.island_idle = 50
         self.island_expand = self.settings.get("island_expand", 100)
-        if self.island_expand not in (100, 125):
+        if self.island_expand not in (26, 75, 100, 125, 150, 175):
             self.island_expand = 100
         # Top and Floating each remember their own resting spot, so switching
         # between them doesn't drag one to the other's position
@@ -1762,6 +1939,10 @@ class MusicWidget(QWidget):
         self._normal_pos = (self.settings.get("x", 100), self.settings.get("y", 100))
         self._island_expanded = False
         self._island_on_top = False
+        # True while a Circle-mode expand/collapse is animating: the frame is
+        # masked to an ellipse so it stays round instead of morphing through a
+        # rectangle (the "square then circle" flash).
+        self._circle_anim = False
         self._island_last_title = None
 
         # Keep the Run-key command current (e.g. after moving/updating the exe)
@@ -2068,6 +2249,12 @@ class MusicWidget(QWidget):
         self.prev_btn.setIconSize(QSize(size_cfg["icon_skip"], size_cfg["icon_skip"]))
         self.next_btn.setIconSize(QSize(size_cfg["icon_skip"], size_cfg["icon_skip"]))
 
+        # Reset overrides that only Circle mode applies, so every other layout
+        # starts from a clean slate (fixed-size art, themed text colors).
+        self.art_label.setScaledContents(False)
+        self.title.setStyleSheet("")
+        self.artist.setStyleSheet("")
+
         # Album art + volume button dimensions (Normal / Wide / Large only)
         art_size = size_cfg.get("art_size", 0)
         if art_size:
@@ -2078,7 +2265,7 @@ class MusicWidget(QWidget):
             self.vol_btn.setIconSize(QSize(size_cfg["icon_vol"], size_cfg["icon_vol"]))
         
         # Configure minimize + pin buttons (pin sits just left of minimize)
-        if scale in (25, 50):
+        if scale in (25, 26, 50, 175):  # Drop / Round / XS / Circle: no corner buttons
             self.min_btn.hide()
             self.pin_btn.hide()
         elif scale in (75, 125):
@@ -2103,8 +2290,8 @@ class MusicWidget(QWidget):
             self.pin_btn.setFixedSize(18, 18)
             self.pin_btn.setIconSize(QSize(10, 10))
 
-        # Reset text alignments (Mini and Large center their text)
-        if scale not in (125, 150):
+        # Reset text alignments (Mini, Large and Circle center their text)
+        if scale not in (125, 150, 175):
             self.title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.artist.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.status_text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -2128,6 +2315,34 @@ class MusicWidget(QWidget):
             layout.addStretch(1)
             layout.addWidget(self.art_label)
             layout.addStretch(1)
+
+        elif scale == 26:  # XS (Round) - circular art at rest; hover reveals the buttons over it
+            self.status_dot.hide()
+            self.status_text.hide()
+            self.time_label.hide()
+            self.vol_btn.hide()
+            self.title.hide()
+            self.artist.hide()
+            self.art_label.show()
+
+            # Art fills the circle (positioned absolutely, like Circle mode); the
+            # three buttons overlay it and are shown only while hovering.
+            self.art_label.setMinimumSize(0, 0)
+            self.art_label.setMaximumSize(16777215, 16777215)
+            self.art_label.setScaledContents(True)
+
+            layout = QHBoxLayout(self.card)
+            layout.setContentsMargins(4, 4, 4, 4)
+            layout.setSpacing(8)
+            layout.addStretch(1)
+            layout.addWidget(self.prev_btn)
+            layout.addWidget(self.play_btn)
+            layout.addWidget(self.next_btn)
+            layout.addStretch(1)
+
+            self.art_label.setGeometry(1, 1, self.card.width() - 2, self.card.height() - 2)
+            # Rest = art only; hover = buttons over the dark card (art hidden)
+            self._set_xs_hover(self._hovering)
 
         elif scale == 50:  # Extra Small (XS) - art tile + title/artist; hover swaps to the 3 buttons
             self.status_dot.hide()
@@ -2283,6 +2498,55 @@ class MusicWidget(QWidget):
             controls_layout.addStretch(1)
             layout.addLayout(controls_layout)
 
+        elif scale == 175:  # Circle - round card: circular art, text, controls stacked inside the circle
+            self.title.show()
+            self.artist.show()
+            self.status_dot.hide()
+            self.status_text.hide()
+            self.time_label.hide()
+            self.art_label.show()
+            self.vol_btn.hide()
+
+            self.prev_btn.show()
+            self.play_btn.show()
+            self.next_btn.show()
+
+            self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            # The album art fills the whole circle; the title and controls are
+            # overlaid on top of it. Free the art label from the layout and its
+            # fixed size so resizeEvent can stretch it to fill the card.
+            self.art_label.setMinimumSize(0, 0)
+            self.art_label.setMaximumSize(16777215, 16777215)
+            self.art_label.setScaledContents(True)
+            # White text/icons stay legible on the baked scrim in any theme
+            self.title.setStyleSheet("color: #FFFFFF;")
+            self.artist.setStyleSheet("color: rgba(255, 255, 255, 0.82);")
+
+            layout = QVBoxLayout(self.card)
+            # Title in the upper third, controls in the lower third — both where
+            # the circle is wide enough to hold them; art shows through between.
+            layout.setContentsMargins(16, 26, 16, 22)
+            layout.setSpacing(0)
+            layout.addWidget(self.title)
+            layout.addWidget(self.artist)
+            layout.addStretch(1)
+
+            controls_layout = QHBoxLayout()
+            controls_layout.setSpacing(10)
+            controls_layout.setContentsMargins(0, 0, 0, 0)
+            controls_layout.addStretch(1)
+            controls_layout.addWidget(self.prev_btn)
+            controls_layout.addWidget(self.play_btn)
+            controls_layout.addWidget(self.next_btn)
+            controls_layout.addStretch(1)
+            layout.addLayout(controls_layout)
+
+            # Art fills the card, sitting behind the overlaid text + controls
+            # (resizeEvent enforces the final z-order and tracks the size).
+            self.art_label.setGeometry(1, 1, self.card.width() - 2, self.card.height() - 2)
+
         elif scale == 150:  # Large (L) - Vertical card with big art on top
             self.title.show()
             self.artist.show()
@@ -2371,7 +2635,16 @@ class MusicWidget(QWidget):
             self._update_glass_overlay()
 
         scale = self._layout_scale()
-        if scale in (25, 50):
+        if scale in (26, 175) and hasattr(self, "art_label"):
+            # Circle / XS (Round): art fills the card behind the overlaid
+            # text/buttons. Enforce the full stack bottom->top so the art sits
+            # above the blurred bg/glass but below the text, buttons and progress.
+            self.art_label.setGeometry(1, 1, self.width() - 2, self.height() - 2)
+            for w in (self.bg_label, self.glass_label, self.art_label,
+                      self.title, self.artist, self.prev_btn, self.play_btn,
+                      self.next_btn, self.progress_line):
+                w.raise_()
+        if scale in (25, 26, 50, 175):
             self.min_btn.hide()
             self.pin_btn.hide()
             return
@@ -2512,6 +2785,7 @@ class MusicWidget(QWidget):
 
         size_levels = [
             ("Extra Small (XS)", 50),
+            ("XS (Round)", 26),
             ("Small (S)", 75),
             ("Normal (N)", 100),
             ("Mini Card (M)", 125),
@@ -2541,7 +2815,8 @@ class MusicWidget(QWidget):
         island_menu.addSection("Idle Size")
         self.island_idle_group = QActionGroup(self)
         self.island_idle_actions = {}
-        for label, pct in [("Drop (Art Only)", 25), ("Extra Small (XS)", 50), ("Small (S)", 75)]:
+        for label, pct in [("Drop (Art Only)", 25), ("XS (Round)", 26),
+                           ("Extra Small (XS)", 50), ("Small (S)", 75)]:
             action = QAction(label, self, checkable=True)
             action.setData(pct)
             action.triggered.connect(self.change_island_idle_from_action)
@@ -2555,7 +2830,9 @@ class MusicWidget(QWidget):
         island_menu.addSection("Expands To")
         self.island_expand_group = QActionGroup(self)
         self.island_expand_actions = {}
-        for label, pct in [("Normal (N)", 100), ("Mini Card (M)", 125)]:
+        for label, pct in [("XS (Round)", 26), ("Small (S)", 75), ("Normal (N)", 100),
+                           ("Mini Card (M)", 125), ("Large (L)", 150),
+                           ("Circle", 175)]:
             action = QAction(label, self, checkable=True)
             action.setData(pct)
             action.triggered.connect(self.change_island_expand_from_action)
@@ -2683,6 +2960,8 @@ class MusicWidget(QWidget):
     def _scale_window_size(self, scale: int) -> tuple:
         if scale == 25:
             return 48, 48  # Drop: circular punch-hole
+        if scale == 26:
+            return 96, 96  # XS (Round): 2x Drop circle
         if scale == 50:
             return 140, 46
         if scale == 75:
@@ -2691,6 +2970,8 @@ class MusicWidget(QWidget):
             return 140, 178  # Mini: vertical card as narrow as XS
         if scale == 150:
             return 216, 344  # taller for big album art on top
+        if scale == 175:
+            return 184, 184  # Circle: square window, fully rounded via card_radius
         return 330, 76
 
     def _is_island(self) -> bool:
@@ -2726,6 +3007,12 @@ class MusicWidget(QWidget):
         anim = getattr(self, "_geo_anim", None)
         if anim is not None:
             anim.stop()
+
+        # Stopping the animation skips _after_geo_anim, so drop any leftover
+        # Circle ellipse mask here or the next layout would stay clipped.
+        if self._circle_anim:
+            self._circle_anim = False
+            self.clearMask()
 
         # The island pill lives at the screen's top edge and must float above
         # everything; force the on-top hint while the mode is active without
@@ -2801,6 +3088,18 @@ class MusicWidget(QWidget):
         # idle one (Drop/XS) did not — refresh the timeline-hover state now that
         # _layout_scale() reflects the new size, so the seek bar lights up
         self._update_seek_hover()
+
+        # Circle expands/collapses stay round throughout: clip to an ellipse for
+        # the whole animation so a wide idle pill never shows rectangular corners
+        # mid-morph. The mask is dropped in _after_geo_anim so the resting circle
+        # keeps its smooth antialiased QSS edge.
+        self._circle_anim = (self.island_expand in (26, 175))
+        if self._circle_anim:
+            self.setMask(QRegion(0, 0, self.width(), self.height(),
+                                 QRegion.RegionType.Ellipse))
+        else:
+            self.clearMask()
+
         self._animate_geometry(QRect(tx, ty, tw, th))
 
     def _animate_geometry(self, target: QRect):
@@ -2820,8 +3119,16 @@ class MusicWidget(QWidget):
     def _geo_anim_step(self, rect):
         self.setFixedSize(rect.width(), rect.height())
         self.move(rect.x(), rect.y())
+        if self._circle_anim:
+            self.setMask(QRegion(0, 0, rect.width(), rect.height(),
+                                 QRegion.RegionType.Ellipse))
 
     def _after_geo_anim(self):
+        # Drop the animation ellipse mask so the settled shape uses the card's
+        # smooth antialiased QSS corners (a perfect circle at the square size).
+        if self._circle_anim:
+            self._circle_anim = False
+            self.clearMask()
         # Regenerate size-dependent pixmaps (art bg, glass) at final geometry
         self._update_art()
         self._update_glass_overlay()
@@ -3425,11 +3732,20 @@ class MusicWidget(QWidget):
         self._last_open_ts = now
 
         name = get_friendly_source_name(aumid, self.snapshot.artist) or "player"
+
+        # Prefer focusing the window that's already playing. Re-launching via
+        # shell:AppsFolder spawns a fresh window for browser-hosted players
+        # (YT Music PWA) and some apps, so first look for a live top-level
+        # window whose AUMID matches the media session and bring it forward.
+        existing = _find_window_by_aumid(aumid)
+        if existing and _activate_hwnd(existing):
+            self._show_volume_feedback(f"Switched to {name}")
+            return
+
         self._show_volume_feedback(f"Opening {name}…")
 
-        # shell:AppsFolder\<AUMID> launches or re-activates a registered app.
-        # Best-effort: browser-hosted playback (aumid == the browser) just
-        # reopens the browser, and unknown desktop AUMIDs fail silently.
+        # No matching window found — fall back to launching/re-activating the
+        # registered app. Unknown desktop AUMIDs fail silently.
         try:
             subprocess.Popen(
                 ["explorer.exe", f"shell:AppsFolder\\{aumid}"],
@@ -3733,8 +4049,22 @@ class MusicWidget(QWidget):
             self._set_island_expanded(False)
 
     def _set_xs_hover(self, hovering: bool):
+        scale = self._layout_scale()
+        if scale == 26:
+            # XS (Round): circular art at rest, buttons on hover (art hidden so
+            # they sit legibly on the dark card). As a plain size it swaps on
+            # hover; as an island *idle* it stays art (hover expands the card
+            # instead); as an island *expand* target it shows the buttons.
+            show_buttons = hovering and (
+                not self._is_island() or self._island_expanded
+            )
+            self.art_label.setVisible(not show_buttons)
+            self.prev_btn.setVisible(show_buttons)
+            self.play_btn.setVisible(show_buttons)
+            self.next_btn.setVisible(show_buttons)
+            return
         # XS only: art + title/artist at rest, the three buttons while hovering
-        if self._layout_scale() != 50:
+        if scale != 50:
             return
         # Island idle borrows the XS layout but hover expands the card instead
         # of swapping to buttons — always render the rest state there
@@ -3864,17 +4194,27 @@ class MusicWidget(QWidget):
             return
         radius = size_cfg.get("art_radius", 8)
         theme_code = self.last_theme_code or "theme_1"
-        # dpr in the signature: moving to a different-DPI monitor re-renders
-        sig = (art_size, radius, theme_code, len(thumb), dpr)
+        # dpr in the signature: moving to a different-DPI monitor re-renders.
+        # Circle mode gets its own signature so switching to/from it re-renders.
+        circle = scale == 175
+        round_idle = scale == 26
+        sig = (art_size, radius, theme_code, len(thumb), dpr, circle, round_idle)
         if thumb == self._last_thumb_data and sig == self._last_art_sig:
             return
-        pm = rounded_art_pixmap(thumb, art_size, art_size, radius, dpr) if thumb else QPixmap()
+        if circle:
+            pm = circular_art_scrim_pixmap(thumb, art_size, dpr) if thumb else QPixmap()
+        else:
+            # XS (Round) idle uses a plain full circle (no scrim, buttons swap in)
+            r = art_size / 2 if round_idle else radius
+            pm = rounded_art_pixmap(thumb, art_size, art_size, r, dpr) if thumb else QPixmap()
         if pm.isNull():
             theme_cfg = (
                 getattr(self, "_active_theme_config", None)
                 or THEME_CONFIGS.get(theme_code, THEME_CONFIGS["theme_1"])
             )
-            pm = make_art_placeholder(art_size, radius, theme_cfg, dpr)
+            # Circle / Round placeholders are full circles (radius = half the art)
+            ph_radius = art_size / 2 if (circle or round_idle) else radius
+            pm = make_art_placeholder(art_size, ph_radius, theme_cfg, dpr)
         self.art_label.setPixmap(pm)
         self._last_thumb_data = thumb
         self._last_art_sig = sig
