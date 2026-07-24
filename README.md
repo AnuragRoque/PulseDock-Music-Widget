@@ -9,8 +9,8 @@ Built with **PyQt6** and the **Windows SDK (`winsdk`)**, it's lightweight, adapt
 </p>
 
 <p align="center">
-  <img src="sample%20images/v2/island_expand.gif" alt="Dynamic Island — expands on track change, then collapses" width="620"><br>
-  <sub>🏝️ <b>Dynamic Island mode</b> — the pill expands when the track changes, then melts back down.</sub>
+  <img src="sample%20images/v2/showcase.gif" alt="PulseDock cycling through its themes and morphing through every size" width="400"><br>
+  <sub>🎨 One widget, every mood — themes crossfade and the card morphs through all its sizes.</sub>
 </p>
 
 ---
@@ -23,8 +23,8 @@ Built with **PyQt6** and the **Windows SDK (`winsdk`)**, it's lightweight, adapt
 - **Live Progress Bar (v2.0)** — A slim accent-colored progress line tracks the song position along the bottom edge of the card.
 - **Scrolling Song Text (v2.0)** — Long titles marquee smoothly instead of truncating.
 - **Volume & Mute (v2.0)** — Scroll the mouse wheel anywhere on the widget to change system volume (5% per notch, touchpad friendly); click the speaker to mute/unmute. Implemented with raw Core Audio COM — zero extra dependencies.
-- **Dynamic Auto-Theme** — Matches the active player's brand style (Spotify green, YouTube Music red, …) or derives an accent palette straight from the album art. Manual themes included.
-- **7 Size Modes** — Drop (art only), Extra Small, Small, Normal, Mini Card, Large, plus the two Dynamic Island modes.
+- **Dynamic Auto-Theme** — Matches the active player's brand style (Spotify green, YouTube Music red, …) or derives an accent palette straight from the album art. Manual themes included — plus a **Liquid Glass** material theme that frosts the whole card like real glass.
+- **Size Modes for Every Corner** — Drop (art only), Extra Small, **XS (Round)**, Small, Normal, Mini Card, Large — plus the two Dynamic Island modes.
 - **Desktop-Native Behavior** — Always on Top, Pin to Active Window, Auto-Hide on Fullscreen (games/videos/slides), Launch on Startup, adjustable transparency (20–100%).
 - **Settings Persistence** — Position, size, theme, transparency and every toggle saved atomically under `%LocalAppData%\PulseDock Widget\settings.json`.
 - **System Tray Control Center** — Everything is two clicks away from the tray icon.
@@ -43,21 +43,43 @@ Built with **PyQt6** and the **Windows SDK (`winsdk`)**, it's lightweight, adapt
 
 **Large** is a full vertical mini-player: big cover, source app, elapsed/total time. **Drop** is a single floating circle of album art — the most minimal player you'll ever run.
 
+<details>
+<summary>🟢 <b>XS (Round)</b> — a new pocket-size mode (click to expand)</summary>
+
+<br>
+
+A pure circle of album art, twice the size of Drop. It rests as a clean cover "coin" and, on hover, melts the artwork away to reveal Previous / Play / Next — a complete player in a footprint smaller than a coaster.
+
+| At rest | On hover |
+|:---:|:---:|
+| <img src="sample%20images/v2/17_xs_round.png" width="200"> | <img src="sample%20images/v2/18_xs_round_hover.png" width="200"> |
+
+</details>
+
 ---
 
 ## 🏝️ Dynamic Island
 
-Two island modes, straight from the tray menu:
+An iPhone-style island that rests as a compact pill and swells to full controls on hover — or automatically when the track changes — then melts back down on its own. Two modes, straight from the menu:
 
-- **Dynamic Island (Top)** — docks to the top-center of your screen like a notch companion.
-- **Dynamic Island (Floating)** — same behavior, parked wherever you drop it.
+| Dynamic Island (Top) | Dynamic Island (Floating) |
+|:---:|:---:|
+| <img src="sample%20images/v2/19_island_top.gif" alt="Top island expanding on hover" width="360"> | <img src="sample%20images/v2/20_island_floating.gif" alt="Floating island expanding on hover" width="360"> |
+| Docks to the top-center bezel like a notch companion — grows **downward**. | Parked wherever you drop it — grows **outward from its center**. |
 
-Pick the **idle size** (Drop / XS / Small) and the **expanded size** (Normal / Mini Card). The island expands on hover or when the song changes, shows full controls for a moment, and collapses back on its own.
+Pick the **idle size** (Drop / XS Round / Extra Small / Small) and what it **expands to** (XS Round / Small / Normal / Mini Card / Large / Circle).
 
-<p align="center">
-  <img src="sample%20images/v2/11_island_top.png" alt="Island idle pill docked at top of screen" width="400"><br>
-  <sub>Idle pill docked at the top — title marquees while it rests.</sub>
-</p>
+<details>
+<summary>🔀 Mix your own idle → expand — a few favorites (click to expand)</summary>
+
+<br>
+
+| Drop → Circle | XS Round → Small | XS Round → Mini Card |
+|:---:|:---:|:---:|
+| <img src="sample%20images/v2/21_island_drop_circle.gif" alt="Drop punch-hole expanding to a round card" width="240"> | <img src="sample%20images/v2/22_island_xs_small.gif" alt="XS round coin expanding to a small pill" width="240"> | <img src="sample%20images/v2/23_island_xs_minicard.gif" alt="XS round coin expanding to a mini card" width="240"> |
+| A punch-hole dot that blossoms into a full **round** player. | A cover coin that stretches into a slim horizontal bar. | A cover coin that unfolds into a vertical mini card. |
+
+</details>
 
 ---
 
@@ -75,15 +97,43 @@ Pick the **idle size** (Drop / XS / Small) and the **expanded size** (Normal / M
 
 Also included: **Spotify White**, **YouTube Music Black**, **YouTube Music White**.
 
+<details>
+<summary>🧊 <b>Liquid Glass</b> — the newest material theme (click to expand)</summary>
+
+<br>
+
+**Liquid Glass** swaps the flat fill for a frosted-glass material: a curved highlight sweeps the top edge, light pools where it enters the corners, and the play button becomes a translucent glass disc. It layers *over* whatever is behind it — including the album-art background — so the cover glows softly through the frost.
+
+| Liquid Glass | Liquid Glass + Album Art |
+|:---:|:---:|
+| <img src="sample%20images/v2/13_theme_liquidglass.png" width="380"> | <img src="sample%20images/v2/14_liquidglass_art.png" width="380"> |
+
+</details>
+
+<details>
+<summary>🖼️ <b>Album Art Background</b> — blur the cover into the card (click to expand)</summary>
+
+<br>
+
+Flip on **Album Art Background** and the cover blurs edge-to-edge into the card itself, tinting the whole widget with the track's own colors. It rides along at every size:
+
+| Mini Card | Small |
+|:---:|:---:|
+| <img src="sample%20images/v2/15_artbg_mini.png" width="220"> | <img src="sample%20images/v2/16_artbg_small.png" width="330"> |
+
+</details>
+
 ---
 
-## ⚙️ Tray Control Center
+## ⚙️ Control Center
 
-Right-click the PulseDock tray icon for every setting — no config files to touch:
+Every setting lives in one menu — open it by **right-clicking the tray icon _or_ the widget itself**. Same menu, whichever is closer to your cursor; no config files to touch:
 
 <p align="center">
-  <img src="sample%20images/v2/12_tray_menu.png" alt="Tray menu: Always on Top, Pin to Active Window, Launch on Startup, Auto-Hide on Fullscreen, Album Art Background, High-Res Album Art, Show Progress Bar, Scrolling Song Text, Themes, Transparency, Size, Dynamic Island" width="340">
+  <img src="sample%20images/v2/12_tray_menu.png" alt="Menu: Always on Top, Pin to Active Window, Launch on Startup, Auto-Hide on Fullscreen, Album Art Background, High-Res Album Art, Show Progress Bar, Scrolling Song Text, Themes, Transparency, Size, Dynamic Island" width="340">
 </p>
+
+The top section is all one-tap toggles — **Always on Top**, **Pin to Active Window**, **Launch on Startup**, **Auto-Hide on Fullscreen**, **Album Art Background**, **High-Res Album Art (Online)**, **Show Progress Bar** and **Scrolling Song Text** — followed by the **Themes**, **Transparency**, **Size** and **Dynamic Island** submenus.
 
 ---
 
@@ -106,7 +156,7 @@ python "PulseDock v2.0 Music Widget.py"
 - **Volume** — mouse wheel anywhere over the widget (scrolling up while muted auto-unmutes).
 - **Mute** — click the speaker icon (Normal and larger modes). Unmuting restores your previous level.
 - **Minimize to tray** — click the small chevron in the top-right corner; click the tray icon to bring it back.
-- **Everything else** — right-click the tray icon.
+- **Everything else** — right-click the widget (or the tray icon) for the full menu: themes, sizes, toggles and more.
 
 ---
 
